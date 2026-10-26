@@ -27,6 +27,8 @@ jobs:
           gradle-version: 8.7
 
       - name: Generar proyecto Android Robot IA
+        env:
+          EMBEDDED_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           mkdir -p app/src/main/java/com/robotia/app
 
@@ -74,8 +76,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 3
-                  versionName = "0.3"
+                  versionCode = 4
+                  versionName = "0.4"
               }
 
               compileOptions {
@@ -98,7 +100,6 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-              <!-- Necesario para que Android permita acceder al servicio de reconocimiento de voz -->
               <queries>
                   <intent>
                       <action android:name="android.speech.RecognitionService" />
@@ -130,7 +131,6 @@ jobs:
           package com.robotia.app
 
           import android.app.Activity
-          import android.content.Context
           import android.content.Intent
           import android.net.Uri
           import android.os.Build
@@ -138,10 +138,8 @@ jobs:
           import android.provider.Settings
           import android.view.Gravity
           import android.widget.Button
-          import android.widget.EditText
           import android.widget.LinearLayout
           import android.widget.TextView
-          import android.widget.Toast
 
           class MainActivity : Activity() {
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -156,8 +154,6 @@ jobs:
                       requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
                   }
 
-                  val prefs = getSharedPreferences("robot_prefs", Context.MODE_PRIVATE)
-
                   val layout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       gravity = Gravity.CENTER
@@ -165,27 +161,9 @@ jobs:
                   }
 
                   val title = TextView(this).apply {
-                      text = "Configuración Robot IA"
-                      textSize = 20f
+                      text = "Robot IA Listo"
+                      textSize = 22f
                       gravity = Gravity.CENTER
-                  }
-
-                  val inputKey = EditText(this).apply {
-                      hint = "Pega aquí tu Gemini API Key (AIzaSy...)"
-                      setText(prefs.getString("gemini_key", ""))
-                  }
-
-                  val saveBtn = Button(this).apply {
-                      text = "Guardar Clave"
-                      setOnClickListener {
-                          val key = inputKey.text.toString().trim()
-                          if (key.isNotEmpty()) {
-                              prefs.edit().putString("gemini_key", key).apply()
-                              Toast.makeText(this@MainActivity, "Clave guardada", Toast.LENGTH_SHORT).show()
-                          } else {
-                              Toast.makeText(this@MainActivity, "Ingresa una clave válida", Toast.LENGTH_SHORT).show()
-                          }
-                      }
                   }
 
                   val start = Button(this).apply { 
@@ -212,8 +190,6 @@ jobs:
                   }
 
                   layout.addView(title)
-                  layout.addView(inputKey)
-                  layout.addView(saveBtn)
                   layout.addView(start)
                   layout.addView(stop)
                   setContentView(layout)
@@ -221,14 +197,13 @@ jobs:
           }
           EOF
 
-          cat > app/src/main/java/com/robotia/app/OverlayService.kt <<'EOF'
+          cat > app/src/main/java/com/robotia/app/OverlayService.kt <<EOF
           package com.robotia.app
 
           import android.app.Notification
           import android.app.NotificationChannel
           import android.app.NotificationManager
           import android.app.Service
-          import android.content.Context
           import android.content.Intent
           import android.graphics.Color
           import android.graphics.PixelFormat
@@ -258,6 +233,9 @@ jobs:
               private var tts: TextToSpeech? = null
               private var recognizer: SpeechRecognizer? = null
               private val handler = Handler(Looper.getMainLooper())
+              
+              // Clave inyectada desde GitHub Secrets de forma segura
+              private val apiKey = "$EMBEDDED_KEY".trim()
 
               override fun onBind(intent: Intent?): IBinder? = null
 
@@ -334,21 +312,14 @@ jobs:
               }
 
               private fun iniciarEscucha() {
-                  val prefs = getSharedPreferences("robot_prefs", Context.MODE_PRIVATE)
-                  val apiKey = prefs.getString("gemini_key", "") ?: ""
                   if (apiKey.isEmpty()) {
-                      Toast.makeText(this, "Abre la app y guarda tu API Key primero", Toast.LENGTH_LONG).show()
-                      return
-                  }
-
-                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                      Toast.makeText(this, "Tu teléfono no tiene motor de reconocimiento de voz instalado", Toast.LENGTH_LONG).show()
+                      Toast.makeText(this, "No se encontró GEMINI_API_KEY en GitHub Secrets", Toast.LENGTH_LONG).show()
                       return
                   }
 
                   handler.post {
                       try {
-                          eyes?.setEyeColor(Color.GREEN) // Verde: escuchando
+                          eyes?.setEyeColor(Color.GREEN)
                           recognizer?.destroy()
                           recognizer = SpeechRecognizer.createSpeechRecognizer(this)
                           val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -362,17 +333,15 @@ jobs:
                               override fun onRmsChanged(rmsdB: Float) {}
                               override fun onBufferReceived(buffer: ByteArray?) {}
                               override fun onEndOfSpeech() {
-                                  eyes?.setEyeColor(Color.CYAN) // Celeste: procesando
+                                  eyes?.setEyeColor(Color.CYAN)
                               }
                               override fun onError(error: Int) {
                                   eyes?.setEyeColor(Color.WHITE)
-                                  Toast.makeText(this@OverlayService, "Error de voz código: $error", Toast.LENGTH_SHORT).show()
                               }
                               override fun onResults(results: Bundle?) {
                                   val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                   if (!matches.isNullOrEmpty()) {
-                                      val query = matches[0]
-                                      consultarGemini(query, apiKey)
+                                      consultarGemini(matches[0])
                                   } else {
                                       eyes?.setEyeColor(Color.WHITE)
                                   }
@@ -383,34 +352,32 @@ jobs:
                           recognizer?.startListening(intent)
                       } catch (e: Exception) {
                           eyes?.setEyeColor(Color.WHITE)
-                          Toast.makeText(this@OverlayService, "Error iniciando voz: ${e.message}", Toast.LENGTH_SHORT).show()
                       }
                   }
               }
 
-              private fun consultarGemini(prompt: String, apiKey: String) {
+              private fun consultarGemini(prompt: String) {
                   thread {
                       try {
-                          // Usamos gemini-1.5-flash que es compatible con todas las cuentas y regiones
-                          val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+                          val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
                           val url = URL(endpoint)
                           val conn = url.openConnection() as HttpURLConnection
                           conn.requestMethod = "POST"
                           conn.setRequestProperty("Content-Type", "application/json")
+                          conn.setRequestProperty("x-goog-api-key", apiKey)
                           conn.doOutput = true
 
                           val jsonBody = JSONObject().apply {
                               put("contents", JSONArray().put(
                                   JSONObject().put("parts", JSONArray().put(
-                                      JSONObject().put("text", "Eres un asistente amable. Responde muy breve en una frase en español: $prompt")
+                                      JSONObject().put("text", "Responde en español de forma amigable y muy corta: " + prompt)
                                   ))
                               ))
                           }
 
                           OutputStreamWriter(conn.outputStream).use { it.write(jsonBody.toString()) }
 
-                          val responseCode = conn.responseCode
-                          if (responseCode == 200) {
+                          if (conn.responseCode == 200) {
                               val responseText = conn.inputStream.bufferedReader().use { it.readText() }
                               val json = JSONObject(responseText)
                               val reply = json.getJSONArray("candidates")
@@ -421,7 +388,7 @@ jobs:
                                   .getString("text")
 
                               handler.post {
-                                  eyes?.setEyeColor(Color.YELLOW) // Amarillo: hablando
+                                  eyes?.setEyeColor(Color.YELLOW)
                                   tts?.speak(reply, TextToSpeech.QUEUE_FLUSH, null, "robot_speech")
                                   handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 4000)
                               }
@@ -429,14 +396,14 @@ jobs:
                               val errorMsg = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
                               handler.post {
                                   eyes?.setEyeColor(Color.RED)
-                                  Toast.makeText(this@OverlayService, "Error API ($responseCode): $errorMsg", Toast.LENGTH_LONG).show()
+                                  Toast.makeText(this@OverlayService, "Error API: " + errorMsg, Toast.LENGTH_LONG).show()
                                   handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 3000)
                               }
                           }
                       } catch (e: Exception) {
                           handler.post {
                               eyes?.setEyeColor(Color.RED)
-                              Toast.makeText(this@OverlayService, "Fallo de conexión: ${e.message}", Toast.LENGTH_LONG).show()
+                              Toast.makeText(this@OverlayService, "Error: " + e.message, Toast.LENGTH_LONG).show()
                               handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 3000)
                           }
                       }
