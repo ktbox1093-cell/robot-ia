@@ -1,4 +1,4 @@
-name: Build APK Robot IA Cyberpunk Edition
+name: Build APK Robot IA Fluid Pro
 
 on:
   workflow_dispatch:
@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 12
-                  versionName = "1.2"
+                  versionCode = 13
+                  versionName = "1.3"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -142,7 +142,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.2")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.3")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -235,21 +235,14 @@ jobs:
                       "neutral", "feliz", "triste", "enojado",
                       "sorprendido", "amor", "sueno", "guino"
                   )
-                  val COLOR_NAMES = listOf(
-                      "Cian Tech", "Verde Matrix", "Azul Neón", "Rosa Fucsia", "Naranja Pro", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"
-                  )
                   val COLORS = intArrayOf(
                       Color.rgb(0, 229, 255), Color.rgb(60, 235, 120), Color.rgb(70, 130, 255),
                       Color.rgb(255, 110, 190), Color.rgb(255, 150, 40), Color.WHITE,
                       Color.rgb(255, 70, 70), Color.rgb(255, 220, 60)
                   )
-                  val SHAPE_NAMES = listOf("Redondos", "Suaves", "Cápsulas")
               }
 
               private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  setShadowLayer(16f, 0f, 0f, Color.parseColor("#00E5FF"))
-              }
               private val density = ctx.resources.displayMetrics.density
               private var open = 1f
               private var lx = 0f
@@ -295,7 +288,7 @@ jobs:
 
               private val loop = object : Runnable {
                   override fun run() {
-                      val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
+                      val a = ValueAnimator.ofFloat(1f, 0.1f, 1f)
                       a.duration = 180
                       a.addUpdateListener {
                           open = it.animatedValue as Float
@@ -306,7 +299,7 @@ jobs:
                           lx = (-1..1).random().toFloat() * 0.8f
                           ly = 0f
                       }
-                      handler.postDelayed(this, (3000..6000).random().toLong())
+                      handler.postDelayed(this, (3500..6500).random().toLong())
                   }
               }
 
@@ -320,74 +313,48 @@ jobs:
 
               override fun onMeasure(w: Int, h: Int) {
                   setMeasuredDimension(
-                      (120 * density * sizeScale).toInt(),
-                      (45 * density * sizeScale).toInt()
+                      (130 * density * sizeScale).toInt(),
+                      (50 * density * sizeScale).toInt()
                   )
               }
 
               override fun onDraw(c: Canvas) {
-                  // Sin fondo negro completo: ¡Ojos totalmente flotantes y transparentes tipo Astro Bot / Cozmo!
                   val w = width.toFloat()
                   val h = height.toFloat()
-                  var eh = h * 0.75f
-                  if (state == LISTENING) eh *= 1.15f
-                  if (expression == 4) eh *= 1.25f
+                  val eh = h * 0.8f
                   val ew = when (shape) {
-                      0 -> eh * 0.95f
-                      2 -> eh * 0.6f
-                      else -> eh * 1.05f
+                      0 -> eh * 0.9f
+                      2 -> eh * 0.55f
+                      else -> eh
                   }
-                  val rr = if (shape == 1) eh * 0.45f else eh
                   val cy = h / 2
                   val dx = if (state == THINKING) 0.8f else lx
                   val dy = if (state == THINKING) -0.8f else ly
-                  
+
                   for (i in 0..1) {
                       fill.color = eyeColor
-                      glow.setShadowLayer(14f, 0f, 0f, eyeColor)
-                      val cx = (if (i == 0) w * 0.3f else w * 0.7f) + dx * eh * 0.45f
-                      drawEye(c, i, cx, cy + dy * eh * 0.3f, ew, eh, rr)
+                      val cx = (if (i == 0) w * 0.3f else w * 0.7f) + dx * eh * 0.4f
+                      drawEye(c, i, cx, cy + dy * eh * 0.3f, ew, eh)
                   }
               }
 
-              private fun drawEye(
-                  c: Canvas, i: Int, cx: Float, cy: Float, ew: Float, eh: Float, rr: Float
-              ) {
+              private fun drawEye(c: Canvas, i: Int, cx: Float, cy: Float, ew: Float, eh: Float) {
                   val ex = expression
                   if (ex == 5) {
                       heart(c, cx, cy, eh)
                       return
                   }
                   var hh = eh * open
-                  if (ex == 7 && i == 1) hh = eh * 0.12f // Guiño en un ojo
-                  if (hh < 1f) hh = 1f
-                  val rect = RectF(cx - ew, cy - hh, cx + ew, cy + hh)
-                  val r = minOf(rr, ew, hh)
-                  val path = Path()
-                  path.addRoundRect(rect, r, r, Path.Direction.CW)
-                  c.save()
-                  c.clipPath(path)
-                  c.drawRect(rect, fill)
-                  
-                  // Párpados expresivos
-                  val top = cy - hh
-                  val tall = hh * 2
-                  fun lid(inner: Float, outer: Float) {
-                      val yl = top + tall * (if (i == 0) outer else inner)
-                      val yr = top + tall * (if (i == 0) inner else outer)
-                      val p = Path()
-                      p.moveTo(cx - ew - 2f, top - 2f)
-                      p.lineTo(cx + ew + 2f, top - 2f)
-                      p.lineTo(cx + ew + 2f, yr)
-                      p.lineTo(cx - ew - 2f, yl)
-                      p.close()
-                      c.drawColor(Color.TRANSPARENT)
-                  }
-                  c.restore()
+                  if (ex == 7 && i == 1) hh = eh * 0.15f // Guiño fluido
+                  if (hh < 4f) hh = 4f // Evita que se colapse en una línea
+
+                  val rect = RectF(cx - ew / 2f, cy - hh / 2f, cx + ew / 2f, cy + hh / 2f)
+                  val r = hh / 2f
+                  c.drawRoundRect(rect, r, r, fill)
               }
 
               private fun heart(c: Canvas, cx: Float, cy: Float, eh: Float) {
-                  val s = eh * 0.75f * (0.85f + 0.15f * open)
+                  val s = eh * 0.6f * (0.85f + 0.15f * open)
                   val p = Path()
                   p.moveTo(cx, cy + s)
                   p.cubicTo(cx - s * 1.6f, cy - s * 0.2f, cx - s * 0.7f, cy - s * 1.3f, cx, cy - s * 0.45f)
@@ -448,7 +415,7 @@ jobs:
 
           class OverlayService : Service() {
               companion object {
-                  const val SYSTEM_BASE = "Eres Robot IA, un asistente cibernético avanzado estilo Cozmo y Astro Bot que vive en la pantalla del usuario. Responde en español, de forma muy cálida, juguetona y en una o dos frases cortas. Empieza SIEMPRE tu respuesta con una etiqueta de emoción: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] o [guino]. Si el usuario te pide una acción del sistema (llamar, abrir app, alarma, mensaje), incluye al final la etiqueta [ACCION:...]. Si te cuenta un dato personal, incluye [MEMORIA:...]."
+                  const val SYSTEM_BASE = "Eres Robot IA, un asistente cibernético avanzado estilo Cozmo y Astro Bot que vive en la pantalla del usuario. Responde en español, de forma cálida y en una o dos frases cortas. Empieza SIEMPRE con una emoción: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] o [guino]. Si te piden acción del sistema, añade [ACCION:...]. Si te dan un dato personal, añade [MEMORIA:...]."
               }
 
               private lateinit var wm: WindowManager
@@ -554,8 +521,7 @@ jobs:
                               }
                           })
                           ttsReady = true
-                          // Sonido/Saludo inicial estilo bot de juego al despertar
-                          speak("¡Hola! Sistema cibernético activado.", "feliz")
+                          speak("¡Hola! Sistema cibernético listo.", "feliz")
                       }
                   }
 
@@ -1064,16 +1030,14 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   
-                  // Control estricto de aperturas (Primeras 2 veces personalizable)
-                  val launchCount = prefs.getInt("launch_count", 0) + 1
-                  prefs.edit().putInt("launch_count", launchCount).apply()
-
+                  // Límite exacto de 3 modificaciones permitidas (no cuenta abrir/cerrar la app)
+                  val editCount = prefs.getInt("config_edit_count", 0)
                   val lastChangeTime = prefs.getLong("last_config_change", 0L)
                   val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000L
                   val now = System.currentTimeMillis()
-                  
-                  // Permitir personalizar solo si launchCount <= 2 o ya pasó 1 semana
-                  val canCustomize = (launchCount <= 2) || ((now - lastChangeTime) > sevenDaysMillis)
+
+                  // Permitir cambiar si editCount < 3 o si ya pasó 1 semana desde la última modificación
+                  val canCustomize = (editCount < 3) || ((now - lastChangeTime) > sevenDaysMillis)
 
                   val perms = mutableListOf(
                       Manifest.permission.RECORD_AUDIO,
@@ -1086,7 +1050,6 @@ jobs:
 
                   val pad = (24 * resources.displayMetrics.density).toInt()
                   
-                  // Estilo Cyberpunk / Tech (Fondo oscuro azulado / negro profundo)
                   val rootLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       gravity = Gravity.CENTER_HORIZONTAL
@@ -1094,32 +1057,46 @@ jobs:
                       setBackgroundColor(Color.parseColor("#0B0F19"))
                   }
 
-                  // Animación de entrada fluida estilo videojuego (Fade + Scale)
+                  // Animación de entrada fluida estilo videojuego
                   val animSet = AnimationSet(true).apply {
                       addAnimation(AlphaAnimation(0f, 1f).apply { duration = 400 })
                       addAnimation(ScaleAnimation(0.9f, 1f, 0.9f, 1f, ScaleAnimation.RELATIVE_TO_SELF, 0.5f, ScaleAnimation.RELATIVE_TO_SELF, 0.5f).apply { duration = 400 })
                   }
                   rootLayout.startAnimation(animSet)
 
-                  // Logo Cyberbot Estilo Astro / Cozmo en Texto Estilizado de Neón
                   val logoView = TextView(this).apply {
                       text = "🤖 ROBOT IA BOT"
-                      textSize = 24f
+                      textSize = 26f
                       typeface = Typeface.DEFAULT_BOLD
                       setTextColor(Color.parseColor("#00E5FF"))
                       gravity = Gravity.CENTER
                       setPadding(0, pad, 0, pad / 2)
-                      setShadowLayer(12f, 0f, 0f, Color.parseColor("#00E5FF"))
+                      setShadowLayer(14f, 0f, 0f, Color.parseColor("#00E5FF"))
                   }
                   rootLayout.addView(logoView)
 
                   val info = TextView(this).apply {
-                      text = "Panel de Asistente Cibernético\n• Inicios registrados: $launchCount / 2 (Modo configuración libre)"
+                      text = "Asistente Cibernético Profesional\n• Modificaciones realizadas: $editCount / 3 permitidas"
                       setTextColor(Color.parseColor("#A0AEC0"))
                       textSize = 14f
                       gravity = Gravity.CENTER
                   }
                   rootLayout.addView(info)
+
+                  // Botón visible de personalización para abrir/cerrar el panel
+                  val btnToggleCustom = Button(this).apply {
+                      text = if (canCustomize) "⚙️ Personalizar API Key" else "🔒 Configuración Bloqueada"
+                      setBackgroundColor(Color.parseColor("#1A202C"))
+                      setTextColor(Color.parseColor("#00E5FF"))
+                      typeface = Typeface.DEFAULT_BOLD
+                  }
+                  rootLayout.addView(btnToggleCustom)
+
+                  val configContainer = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      visibility = View.GONE // Oculto por defecto hasta tocar el botón
+                      setPadding(0, 20, 0, 20)
+                  }
 
                   val spinner = Spinner(this)
                   spinner.adapter = ArrayAdapter(
@@ -1145,35 +1122,40 @@ jobs:
                       setPadding(20, 25, 20, 25)
                   }
 
-                  // Si ya pasaron las 2 primeras veces y no ha cumplido 1 semana, ocultar/bloquear campos de configuración
-                  val configContainer = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(0, 20, 0, 20)
-                  }
-
                   if (!canCustomize) {
-                      configContainer.visibility = View.GONE
                       val lockedMsg = TextView(this).apply {
-                          text = "🔒 Configuración bloqueada.\n\nDentro de 1 semana se modificará la personalización o tras cumplirse el ciclo de seguridad."
+                          text = "⚠️ Has alcanzado el límite de 3 modificaciones. Dentro de 1 semana se reactivará la opción de cambio."
                           setTextColor(Color.parseColor("#FF5252"))
-                          textSize = 15f
+                          textSize = 14f
                           gravity = Gravity.CENTER
-                          setPadding(0, 30, 0, 30)
+                          setPadding(0, 20, 0, 20)
                       }
-                      rootLayout.addView(lockedMsg)
+                      configContainer.addView(lockedMsg)
+                      keyBox.isEnabled = false
+                      spinner.isEnabled = false
+                      modelBox.isEnabled = false
                   } else {
                       configContainer.addView(spinner)
                       configContainer.addView(keyBox)
                       configContainer.addView(modelBox)
                       
                       val saveNotice = TextView(this).apply {
-                          text = "✨ Tu API Key se guarda automáticamente al escribirla."
+                          text = "✨ Tu API Key se guarda automáticamente."
                           setTextColor(Color.parseColor("#00E5FF"))
                           textSize = 12f
                           setPadding(0, 10, 0, 10)
                       }
                       configContainer.addView(saveNotice)
-                      rootLayout.addView(configContainer)
+                  }
+                  rootLayout.addView(configContainer)
+
+                  // Alternar visibilidad del panel al pulsar el botón de personalización
+                  btnToggleCustom.setOnClickListener {
+                      if (configContainer.visibility == View.VISIBLE) {
+                          configContainer.visibility = View.GONE
+                      } else {
+                          configContainer.visibility = View.VISIBLE
+                      }
                   }
 
                   val track = CheckBox(this).apply {
@@ -1219,11 +1201,15 @@ jobs:
                       prefs.edit().putBoolean("track", track.isChecked).apply()
                       val c = current ?: return
                       val typedKey = Llm.clean(keyBox.text.toString())
-                      if (typedKey.isNotBlank()) {
+                      val oldKey = prefs.getString("key_" + c, "") ?: ""
+                      
+                      if (typedKey.isNotBlank() && typedKey != oldKey) {
+                          val newCount = editCount + 1
                           prefs.edit()
                               .putString("key_" + c, typedKey)
                               .putString("model_" + c, modelBox.text.toString().trim())
                               .putString("provider", c)
+                              .putInt("config_edit_count", newCount)
                               .putLong("last_config_change", System.currentTimeMillis())
                               .apply()
                       }
@@ -1242,7 +1228,6 @@ jobs:
                   val saved = prefs.getString("provider", "groq") ?: "groq"
                   spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
 
-                  // Guardado automático en tiempo real al escribir la clave API
                   keyBox.addTextChangedListener(object : android.text.TextWatcher {
                       override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                       override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -1307,10 +1292,10 @@ jobs:
           }
           EOF
 
-      - name: Compilar APK Final Cyberpunk
+      - name: Compilar APK Final Fluid Pro
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: robot-ia-apk-cyberpunk
+          name: robot-ia-apk-fluid
           path: app/build/outputs/apk/debug/app-debug.apk
