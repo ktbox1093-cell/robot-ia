@@ -1,4 +1,4 @@
-name: Build APK Robot IA Masterpiece
+name: Build APK Robot IA Commercial Cloud
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Generar proyecto Android
+      - name: Generar proyecto Android Comercial
         run: |
           mkdir -p app/src/main/java/com/robotia/app
           mkdir -p app/src/main/res/mipmap-anydpi-v26
@@ -68,8 +68,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 16
-                  versionName = "1.6"
+                  versionCode = 20
+                  versionName = "2.0"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -158,86 +158,44 @@ jobs:
           import java.net.URL
 
           object Llm {
+              // URL oficial de tu nube privada en Render conectada y lista
+              private const val CLOUD_PROXY_URL = "https://robot-ia-cloud.onrender.com/api/chat"
+
               class LlmError(val code: Int, message: String) : Exception(message)
 
-              fun base(p: String): String =
-                  if (p == "mistral") "https://api.mistral.ai/v1" else "https://api.groq.com/openai/v1"
-
-              fun defaultModel(p: String): String =
-                  if (p == "mistral") "mistral-small-latest" else "llama-3.3-70b-versatile"
-
-              fun clean(key: String): String =
-                  key.filter { !it.isWhitespace() && it != '"' && it != '\'' }
-
-              private fun http(p: String, path: String, key: String, body: JSONObject?): String {
-                  val c = URL(base(p) + path).openConnection() as HttpURLConnection
+              fun chat(system: String, msgs: JSONArray): String {
+                  val url = URL(CLOUD_PROXY_URL)
+                  val c = url.openConnection() as HttpURLConnection
                   c.connectTimeout = 15000
                   c.readTimeout = 40000
-                  c.setRequestProperty("Authorization", "Bearer " + key)
+                  c.requestMethod = "POST"
+                  c.setRequestProperty("Content-Type", "application/json")
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.6")
-                  if (body != null) {
-                      c.requestMethod = "POST"
-                      c.setRequestProperty("Content-Type", "application/json")
-                      c.doOutput = true
-                      c.outputStream.use { it.write(body.toString().toByteArray()) }
-                  }
+                  c.doOutput = true
+
+                  val body = JSONObject()
+                      .put("provider", "groq")
+                      .put("model", "llama-3.3-70b-versatile")
+                      .put("system", system)
+                      .put("messages", msgs)
+
+                  c.outputStream.use { it.write(body.toString().toByteArray()) }
+
                   val code = c.responseCode
                   val stream = if (code in 200..299) c.inputStream else c.errorStream
                   val txt = stream?.bufferedReader()?.use { it.readText() } ?: ""
+
                   if (code !in 200..299) {
-                      val msg = try {
-                          val o = JSONObject(txt)
-                          o.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
-                              ?: o.optString("message").ifBlank { txt.take(200) }
-                      } catch (e: Exception) {
-                          txt.take(200)
-                      }
-                      throw LlmError(code, "HTTP " + code + ": " + msg)
+                      throw LlmError(code, "HTTP " + code + ": " + txt.take(200))
                   }
-                  return txt
-              }
 
-              fun pickModel(p: String, key: String): String {
-                  if (key.isBlank()) throw Exception("falta la clave de API")
-                  val arr = JSONObject(http(p, "/models", key, null)).optJSONArray("data")
-                      ?: throw Exception("la lista de modelos vino vacia")
-                  val bad = listOf(
-                      "whisper", "guard", "tts", "embed", "moderation", "ocr", "audio",
-                      "orpheus", "playai", "vision", "transcribe", "codestral", "pixtral", "voxtral"
-                  )
-                  val ids = ArrayList<String>()
-                  for (n in 0 until arr.length()) {
-                      val id = arr.getJSONObject(n).optString("id")
-                      if (id.isNotBlank() && bad.none { id.contains(it) }) ids.add(id)
-                  }
-                  if (ids.isEmpty()) throw Exception("no hay modelos de chat disponibles para esta clave")
-                  val wanted = if (p == "mistral") {
-                      listOf("mistral-small-latest", "small", "ministral", "medium")
-                  } else {
-                      listOf("llama-3.3-70b", "llama-3.1-8b", "gpt-oss-20b", "gpt-oss-120b", "llama")
-                  }
-                  for (w in wanted) {
-                      val hit = ids.firstOrNull { it.contains(w) }
-                      if (hit != null) return hit
-                  }
-                  return ids.first()
-              }
-
-              fun chat(p: String, key: String, model: String, system: String, msgs: JSONArray): String {
-                  val all = JSONArray().put(JSONObject().put("role", "system").put("content", system))
-                  for (n in 0 until msgs.length()) all.put(msgs.getJSONObject(n))
-                  val body = JSONObject()
-                      .put("model", model)
-                      .put("messages", all)
-                      .put("max_tokens", 600)
-                  val txt = http(p, "/chat/completions", key, body)
                   val out = JSONObject(txt)
                       .optJSONArray("choices")
                       ?.optJSONObject(0)
                       ?.optJSONObject("message")
                       ?.optString("content")
-                  if (out.isNullOrBlank()) throw Exception("el servicio no devolvio respuesta")
+
+                  if (out.isNullOrBlank()) throw Exception("El servidor no devolvió respuesta")
                   return out
               }
           }
@@ -285,7 +243,7 @@ jobs:
 
               var eyeColor = COLORS[0]
               var shape = 1
-              var sizeScale = 1f
+              var sizeScale = 1.0f
 
               var expression = 0
                   set(v) {
@@ -480,7 +438,7 @@ jobs:
                           val randomExpr = (1..7).random()
                           eyes.expression = randomExpr
                           val prefs = getSharedPreferences("robot", MODE_PRIVATE)
-                          val pitch = prefs.getFloat("voice_pitch", 1.2f)
+                          val pitch = prefs.getFloat("voice_pitch", 1.4f)
                           val speed = prefs.getFloat("voice_speed", 1.1f)
                           tts?.setPitch(pitch)
                           tts?.setSpeechRate(speed)
@@ -489,32 +447,12 @@ jobs:
                               if (eyes.state == EyesView.IDLE) eyes.expression = 0
                           }, 1500)
                       }
-                      handler.postDelayed(this, (8000..15000).random().toLong())
+                      handler.postDelayed(this, (7000..13000).random().toLong())
                   }
               }
 
-              private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
-                  if (key == "preview") {
-                      val name = (sp.getString("preview", "") ?: "").substringBefore("|")
-                      val idx = EyesView.EXPR_NAMES.indexOf(name)
-                      if (idx >= 0) {
-                          handler.post {
-                              eyes.expression = idx
-                              handler.postDelayed({
-                                  if (eyes.state == EyesView.IDLE) eyes.expression = 0
-                              }, 2500)
-                          }
-                      }
-                  } else if (key == "track") {
-                      val trackEnabled = sp.getBoolean("track", true)
-                      if (trackEnabled) {
-                          if (camera == null && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                              startCamera()
-                          }
-                      } else {
-                          stopCamera()
-                      }
-                  } else if (key == "eye_color" || key == "eye_shape" || key == "eye_scale" || key == "voice_pitch" || key == "voice_speed") {
+              private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                  if (key == "eye_color" || key == "eye_shape" || key == "eye_scale" || key == "voice_pitch" || key == "voice_speed") {
                       handler.post { applyPrefs() }
                   }
               }
@@ -525,9 +463,9 @@ jobs:
                   val sp = getSharedPreferences("robot", MODE_PRIVATE)
                   eyes.eyeColor = EyesView.COLORS[sp.getInt("eye_color", 0).coerceIn(0, EyesView.COLORS.size - 1)]
                   eyes.shape = sp.getInt("eye_shape", 1).coerceIn(0, 2)
-                  eyes.sizeScale = sp.getFloat("eye_scale", 1f)
+                  eyes.sizeScale = sp.getFloat("eye_scale", 1.0f)
                   
-                  val pitch = sp.getFloat("voice_pitch", 1.2f)
+                  val pitch = sp.getFloat("voice_pitch", 1.4f)
                   val speed = sp.getFloat("voice_speed", 1.1f)
                   tts?.setPitch(pitch)
                   tts?.setSpeechRate(speed)
@@ -571,7 +509,7 @@ jobs:
                   tts = TextToSpeech(this) { status ->
                       if (status == TextToSpeech.SUCCESS) {
                           tts?.language = Locale.getDefault()
-                          val pitch = prefs.getFloat("voice_pitch", 1.2f)
+                          val pitch = prefs.getFloat("voice_pitch", 1.4f)
                           val speed = prefs.getFloat("voice_speed", 1.1f)
                           tts?.setPitch(pitch)
                           tts?.setSpeechRate(speed)
@@ -587,7 +525,7 @@ jobs:
                               }
                           })
                           ttsReady = true
-                          speak("¡Bip bop! Hola, sistema activo.", "feliz")
+                          speak("¡Bip bop! Sistema en línea.", "feliz")
                       }
                   }
 
@@ -647,12 +585,11 @@ jobs:
                   applyPrefs()
                   prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
-                  handler.postDelayed(idleSoundRunnable, 10000)
+                  handler.postDelayed(idleSoundRunnable, 8000)
 
                   if (camOk) startCamera()
               }
 
-              @Suppress("DEPRECATION")
               private fun startCamera() {
                   try {
                       val cm = getSystemService(CameraManager::class.java)
@@ -835,14 +772,8 @@ jobs:
               private fun msg(role: String, text: String): JSONObject =
                   JSONObject().put("role", role).put("content", text)
 
-              private fun callLlm(msgs: JSONArray): String {
+              private fun callLlm(msgs: JSONArray) {
                   val prefs = getSharedPreferences("robot", MODE_PRIVATE)
-                  val p = prefs.getString("provider", "groq") ?: "groq"
-                  val key = Llm.clean(prefs.getString("key_" + p, "") ?: "")
-                  if (key.isBlank()) throw Exception("falta la clave de API en la app")
-                  var model = prefs.getString("model_" + p, "") ?: ""
-                  if (model.isBlank()) model = Llm.defaultModel(p)
-
                   val rawMem = prefs.getString("robot_memory_json", "[]") ?: "[]"
                   val memArray = JSONArray(rawMem)
                   val filteredArray = JSONArray()
@@ -866,15 +797,38 @@ jobs:
                       SYSTEM_BASE
                   }
 
-                  return try {
-                      Llm.chat(p, key, model, fullSystem, msgs)
-                  } catch (e: Llm.LlmError) {
-                      if (e.code != 400 && e.code != 404) throw e
-                      val m = Llm.pickModel(p, key)
-                      if (m == model) throw e
-                      prefs.edit().putString("model_" + p, m).apply()
-                      Llm.chat(p, key, m, fullSystem, msgs)
-                  }
+                  val mine = ++turn
+                  Thread {
+                      var err: String? = null
+                      val reply = try {
+                          Llm.chat(fullSystem, msgs)
+                      } catch (e: Exception) {
+                          err = e.message ?: "Error desconocido"
+                          "Problema de red."
+                      }
+                      handler.post {
+                          if (mine == turn) {
+                              val f = err
+                              if (f == null) {
+                                  history.put(msg("assistant", reply))
+                              } else {
+                                  history.remove(history.length() - 1)
+                                  Toast.makeText(this, f, Toast.LENGTH_LONG).show()
+                              }
+                              while (history.length() > 20) {
+                                  history.remove(0)
+                                  history.remove(0)
+                              }
+                              if (f == null) {
+                                  val cleanReply = parseMemory(reply)
+                                  val parsedEmotion = parseEmotion(cleanReply)
+                                  speak(parsedEmotion.second, parsedEmotion.first)
+                              } else {
+                                  speak(reply, "triste")
+                              }
+                          }
+                      }
+                  }.start()
               }
 
               private fun parseEmotion(reply: String): Pair<String, String> {
@@ -884,14 +838,6 @@ jobs:
                   val idx = EyesView.EXPR_NAMES.indexOfFirst { raw.startsWith(it.take(3)) }
                   val text = reply.substring(m.range.last + 1).ifBlank { reply }
                   return Pair(if (idx >= 0) EyesView.EXPR_NAMES[idx] else "", text)
-              }
-
-              private fun parseAction(reply: String): Pair<String?, String> {
-                  val actionRegex = Regex("\\[ACCION:([^\\]]+)\\]")
-                  val match = actionRegex.find(reply)
-                  val action = match?.groupValues?.get(1)
-                  val cleanReply = reply.replace(actionRegex, "").trim()
-                  return Pair(action, cleanReply)
               }
 
               private fun parseMemory(reply: String): String {
@@ -909,123 +855,10 @@ jobs:
                   return reply.replace(memRegex, "").trim()
               }
 
-              private fun executeAction(action: String) {
-                  try {
-                      val parts = action.split(":")
-                      when (parts[0].uppercase()) {
-                          "ABRIR" -> {
-                              val appName = parts[1].lowercase()
-                              val pm = packageManager
-                              val packages = pm.getInstalledApplications(0)
-                              val target = packages.firstOrNull { 
-                                  pm.getApplicationLabel(it).toString().lowercase().contains(appName) 
-                              }
-                              if (target != null) {
-                                  val intent = pm.getLaunchIntentForPackage(target.packageName)
-                                  intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                  startActivity(intent)
-                                  speak("Aplicación abierta", "feliz")
-                              } else {
-                                  speak("No encontré la aplicación", "triste")
-                              }
-                          }
-                          "ALARMA" -> {
-                              val hour = parts[1].toInt()
-                              val minute = parts[2].toInt()
-                              val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
-                                  putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
-                                  putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
-                                  putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, "Robot Bot Alarm")
-                                  putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                              }
-                              startActivity(intent)
-                              speak("Alarma programada", "feliz")
-                          }
-                          "LLAMAR" -> {
-                              val contact = parts[1]
-                              val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$contact")).apply {
-                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                              }
-                              startActivity(intent)
-                              speak("Abriendo marcador", "neutral")
-                          }
-                          "MENSAJE" -> {
-                              val contact = parts[1]
-                              val message = parts.getOrNull(2) ?: "Hola"
-                              val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$contact")).apply {
-                                  putExtra("sms_body", message)
-                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                              }
-                              startActivity(intent)
-                              speak("Preparando mensaje", "neutral")
-                          }
-                      }
-                  } catch (e: Exception) {
-                      speak("Error ejecutando acción", "triste")
-                  }
-              }
-
               private fun ask(text: String) {
-                  if (pendingAction != null) {
-                      val lower = text.lowercase()
-                      val confirmed = lower.contains("sí") || lower.contains("si") || lower.contains("claro") || lower.contains("dale") || lower.contains("ok")
-                      val act = pendingAction
-                      pendingAction = null
-                      
-                      if (confirmed && act != null) {
-                          executeAction(act)
-                      } else {
-                          speak("Acción cancelada", "neutral")
-                      }
-                      return
-                  }
-
                   eyes.state = EyesView.THINKING
                   history.put(msg("user", text))
-                  val prefs = getSharedPreferences("robot", MODE_PRIVATE)
-                  val msgs = JSONArray(history.toString())
-                  val mine = ++turn
-                  Thread {
-                      var err: String? = null
-                      val reply = try {
-                          callLlm(msgs)
-                      } catch (e: Exception) {
-                          err = e.message ?: "error desconocido"
-                          "Problema de red o API."
-                      }
-                      handler.post {
-                          if (mine == turn) {
-                              val f = err
-                              if (f == null) {
-                                  history.put(msg("assistant", reply))
-                                  prefs.edit().remove("lasterror").apply()
-                              } else {
-                                  history.remove(history.length() - 1)
-                                  prefs.edit().putString("lasterror", f).apply()
-                                  Toast.makeText(this, f, Toast.LENGTH_LONG).show()
-                              }
-                              while (history.length() > 20) {
-                                  history.remove(0)
-                                  history.remove(0)
-                              }
-                              if (f == null) {
-                                  val cleanReply = parseMemory(reply)
-                                  val parsedEmotion = parseEmotion(cleanReply)
-                                  val parsedAction = parseAction(parsedEmotion.second)
-                                  
-                                  if (parsedAction.first != null) {
-                                      pendingAction = parsedAction.first
-                                      speak("¿Confirmas esta acción? Responde sí o no.", "sorprendido")
-                                  } else {
-                                      speak(parsedAction.second, parsedEmotion.first)
-                                  }
-                              } else {
-                                  speak(reply, "triste")
-                              }
-                          }
-                      }
-                  }.start()
+                  callLlm(history)
               }
 
               private fun speak(text: String, emo: String = "") {
@@ -1064,366 +897,10 @@ jobs:
           import android.os.Build
           import android.os.Bundle
           import android.provider.Settings
-          import android.speech.tts.TextToSpeech
-          import android.text.InputType
           import android.view.Gravity
           import android.view.View
           import android.view.animation.AlphaAnimation
           import android.view.animation.AnimationSet
           import android.view.animation.ScaleAnimation
           import android.widget.AdapterView
-          import android.widget.ArrayAdapter
-          import android.widget.Button
-          import android.widget.CheckBox
-          import android.widget.EditText
-          import android.widget.LinearLayout
-          import android.widget.ScrollView
-          import android.widget.Spinner
-          import android.widget.TextView
-          import org.json.JSONArray
-          import org.json.JSONObject
-          import java.util.Locale
-
-          class MainActivity : Activity() {
-              private lateinit var result: TextView
-              private val prefs by lazy { getSharedPreferences("robot", MODE_PRIVATE) }
-              private val providers = listOf("groq", "mistral")
-              private var current: String? = null
-
-              override fun onResume() {
-                  super.onResume()
-                  val err = prefs.getString("lasterror", "") ?: ""
-                  if (err.isNotBlank()) result.text = "Error: " + err
-              }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  val robotEditCount = prefs.getInt("robot_edit_count", 0)
-                  val lastRobotChange = prefs.getLong("last_robot_change", 0L)
-                  val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000L
-                  val now = System.currentTimeMillis()
-
-                  val canCustomizeRobot = (robotEditCount < 3) || ((now - lastRobotChange) > sevenDaysMillis)
-
-                  val perms = mutableListOf(
-                      Manifest.permission.RECORD_AUDIO,
-                      Manifest.permission.CAMERA,
-                      Manifest.permission.CALL_PHONE,
-                      Manifest.permission.SEND_SMS
-                  )
-                  if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.POST_NOTIFICATIONS")
-                  requestPermissions(perms.toTypedArray(), 1)
-
-                  val pad = (24 * resources.displayMetrics.density).toInt()
-                  
-                  val rootLayout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      gravity = Gravity.CENTER_HORIZONTAL
-                      setPadding(pad, pad, pad, pad)
-                      setBackgroundColor(Color.parseColor("#0B0F19"))
-                  }
-
-                  val animSet = AnimationSet(true).apply {
-                      addAnimation(AlphaAnimation(0f, 1f).apply { duration = 400 })
-                      addAnimation(ScaleAnimation(0.9f, 1f, 0.9f, 1f, ScaleAnimation.RELATIVE_TO_SELF, 0.5f, ScaleAnimation.RELATIVE_TO_SELF, 0.5f).apply { duration = 400 })
-                  }
-                  rootLayout.startAnimation(animSet)
-
-                  val logoView = TextView(this).apply {
-                      text = "🤖 ROBOT IA BOT"
-                      textSize = 26f
-                      typeface = Typeface.DEFAULT_BOLD
-                      setTextColor(Color.parseColor("#00E5FF"))
-                      gravity = Gravity.CENTER
-                      setPadding(0, pad, 0, pad / 2)
-                      setShadowLayer(14f, 0f, 0f, Color.parseColor("#00E5FF"))
-                  }
-                  rootLayout.addView(logoView)
-
-                  val info = TextView(this).apply {
-                      text = "Asistente Cibernético Profesional\n• Personalizaciones del robot: $robotEditCount / 3"
-                      setTextColor(Color.parseColor("#A0AEC0"))
-                      textSize = 14f
-                      gravity = Gravity.CENTER
-                  }
-                  rootLayout.addView(info)
-
-                  val existingGroq = prefs.getString("key_groq", "") ?: ""
-                  val existingMistral = prefs.getString("key_mistral", "") ?: ""
-                  val hasApiKey = existingGroq.isNotBlank() || existingMistral.isNotBlank()
-
-                  val apiKeyContainer = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(0, 15, 0, 15)
-                  }
-
-                  if (hasApiKey) {
-                      val savedNotice = TextView(this).apply {
-                          text = "🔒 API Key guardada y asegurada de forma permanente."
-                          setTextColor(Color.parseColor("#00C853"))
-                          textSize = 14f
-                          typeface = Typeface.DEFAULT_BOLD
-                          gravity = Gravity.CENTER
-                          setPadding(0, 10, 0, 10)
-                      }
-                      apiKeyContainer.addView(savedNotice)
-                  } else {
-                      val spinner = Spinner(this)
-                      spinner.adapter = ArrayAdapter(
-                          this,
-                          android.R.layout.simple_spinner_dropdown_item,
-                          listOf("Groq (Ultra Rápido)", "Mistral")
-                      )
-                      apiKeyContainer.addView(spinner)
-
-                      val keyBox = EditText(this).apply {
-                          hint = "Introduce tu clave API personal"
-                          setHintTextColor(Color.parseColor("#718096"))
-                          setTextColor(Color.WHITE)
-                          inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                          setBackgroundColor(Color.parseColor("#1A202C"))
-                          setPadding(20, 25, 20, 25)
-                      }
-                      apiKeyContainer.addView(keyBox)
-
-                      val modelBox = EditText(this).apply {
-                          hint = "Modelo automático"
-                          setHintTextColor(Color.parseColor("#718096"))
-                          setTextColor(Color.WHITE)
-                          setBackgroundColor(Color.parseColor("#1A202C"))
-                          setPadding(20, 25, 20, 25)
-                      }
-                      apiKeyContainer.addView(modelBox)
-
-                      spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                          override fun onItemSelected(parent: AdapterView<*>, v: View?, pos: Int, id: Long) {
-                              val p = providers[pos]
-                              current = p
-                              keyBox.setText(prefs.getString("key_" + p, ""))
-                              modelBox.setText(prefs.getString("model_" + p, ""))
-                              modelBox.hint = Llm.defaultModel(p)
-                          }
-                          override fun onNothingSelected(parent: AdapterView<*>) {}
-                      }
-                      val saved = prefs.getString("provider", "groq") ?: "groq"
-                      spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
-
-                      keyBox.addTextChangedListener(object : android.text.TextWatcher {
-                          override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                          override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                              val c = current ?: return
-                              val typedKey = Llm.clean(keyBox.text.toString())
-                              if (typedKey.isNotBlank()) {
-                                  prefs.edit()
-                                      .putString("key_" + c, typedKey)
-                                      .putString("model_" + c, modelBox.text.toString().trim())
-                                      .putString("provider", c)
-                                      .apply()
-                              }
-                          }
-                          override fun afterTextChanged(s: android.text.Editable?) {}
-                      })
-                  }
-                  rootLayout.addView(apiKeyContainer)
-
-                  val btnToggleCustom = Button(this).apply {
-                      text = "⚙️ Personalizar Robot (Voz, Ojos, Gestos)"
-                      setBackgroundColor(Color.parseColor("#1A202C"))
-                      setTextColor(Color.parseColor("#00E5FF"))
-                      typeface = Typeface.DEFAULT_BOLD
-                      setPadding(0, 15, 0, 15)
-                  }
-                  rootLayout.addView(btnToggleCustom)
-
-                  val robotCustomContainer = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      visibility = View.GONE
-                      setPadding(0, 15, 0, 15)
-                      setBackgroundColor(Color.parseColor("#121826"))
-                  }
-
-                  if (!canCustomizeRobot) {
-                      val lockedMsg = TextView(this).apply {
-                          text = "⚠️ Límite de 3 personalizaciones del robot alcanzado. Dentro de 1 semana podrás volver a modificar sus ajustes."
-                          setTextColor(Color.parseColor("#FF5252"))
-                          textSize = 13f
-                          gravity = Gravity.CENTER
-                          setPadding(10, 10, 10, 10)
-                      }
-                      robotCustomContainer.addView(lockedMsg)
-                  } else {
-                      val customInfo = TextView(this).apply {
-                          text = "Ajusta voz, tamaño de ojos, color y gestos:"
-                          setTextColor(Color.WHITE)
-                          textSize = 13f
-                          setPadding(10, 5, 10, 5)
-                      }
-                      robotCustomContainer.addView(customInfo)
-
-                      fun choice(name: String, key: String, options: List<String>, def: Int) {
-                          robotCustomContainer.addView(TextView(this).apply { 
-                              text = name
-                              setTextColor(Color.parseColor("#A0AEC0"))
-                              setPadding(10, 5, 10, 2)
-                          })
-                          val sp = Spinner(this)
-                          sp.adapter = ArrayAdapter(
-                              this, android.R.layout.simple_spinner_dropdown_item, options
-                          )
-                          sp.setSelection(prefs.getInt(key, def).coerceIn(0, options.size - 1))
-                          sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                              override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                                  if (prefs.getInt(key, def) != pos) {
-                                      prefs.edit().putInt(key, pos).apply()
-                                      val newCount = robotEditCount + 1
-                                      prefs.edit()
-                                          .putInt("robot_edit_count", newCount)
-                                          .putLong("last_robot_change", System.currentTimeMillis())
-                                          .apply()
-                                  }
-                              }
-                              override fun onNothingSelected(parent: AdapterView<*>?) {}
-                          }
-                          robotCustomContainer.addView(sp)
-                      }
-
-                      fun choiceFloat(name: String, key: String, options: List<String>, values: List<Float>, def: Float) {
-                          robotCustomContainer.addView(TextView(this).apply { 
-                              text = name
-                              setTextColor(Color.parseColor("#A0AEC0"))
-                              setPadding(10, 5, 10, 2)
-                          })
-                          val sp = Spinner(this)
-                          sp.adapter = ArrayAdapter(
-                              this, android.R.layout.simple_spinner_dropdown_item, options
-                          )
-                          val currentVal = prefs.getFloat(key, def)
-                          val defIdx = values.indexOf(currentVal).coerceAtLeast(0)
-                          sp.setSelection(defIdx)
-                          sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                              override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                                  val selectedVal = values[pos]
-                                  if (prefs.getFloat(key, def) != selectedVal) {
-                                      prefs.edit().putFloat(key, selectedVal).apply()
-                                      val newCount = robotEditCount + 1
-                                      prefs.edit()
-                                          .putInt("robot_edit_count", newCount)
-                                          .putLong("last_robot_change", System.currentTimeMillis())
-                                          .apply()
-                                  }
-                              }
-                              override fun onNothingSelected(parent: AdapterView<*>?) {}
-                          }
-                          robotCustomContainer.addView(sp)
-                      }
-
-                      choice("Forma de Ojos (Gestos)", "eye_shape", listOf("Redondos", "Suaves", "Cápsulas"), 1)
-                      choice("Color de Ojos", "eye_color", listOf("Cian Tech", "Verde Matrix", "Azul Neón", "Rosa Fucsia", "Naranja Pro", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"), 0)
-                      choiceFloat("Tono de Voz (Robot)", "voice_pitch", listOf("Grave", "Normal", "Agudo / Bot R2D2"), listOf(0.7f, 1.0f, 1.4f), 1.4f)
-                      choiceFloat("Velocidad de Voz", "voice_speed", listOf("Lenta", "Normal", "Rápida"), listOf(0.8f, 1.0f, 1.25f), 1.0f)
-                  }
-                  rootLayout.addView(robotCustomContainer)
-
-                  btnToggleCustom.setOnClickListener {
-                      robotCustomContainer.visibility = if (robotCustomContainer.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                  }
-
-                  val track = CheckBox(this).apply {
-                      text = "Seguir mi rostro con cámara frontal"
-                      setTextColor(Color.WHITE)
-                      isChecked = prefs.getBoolean("track", true)
-                      setOnCheckedChangeListener { _, on ->
-                          prefs.edit().putBoolean("track", on).apply()
-                      }
-                  }
-                  rootLayout.addView(track)
-
-                  result = TextView(this).apply {
-                      setTextColor(Color.parseColor("#00E5FF"))
-                      setPadding(0, 15, 0, 15)
-                      gravity = Gravity.CENTER
-                  }
-                  rootLayout.addView(result)
-
-                  val test = Button(this).apply {
-                      text = "⚡ Probar Conexión API"
-                      setBackgroundColor(Color.parseColor("#00E5FF"))
-                      setTextColor(Color.BLACK)
-                      typeface = Typeface.DEFAULT_BOLD
-                  }
-                  
-                  val start = Button(this).apply {
-                      text = "🟢 ENCENDER ROBOT FLOTANTE"
-                      setBackgroundColor(Color.parseColor("#00C853"))
-                      setTextColor(Color.WHITE)
-                      typeface = Typeface.DEFAULT_BOLD
-                  }
-                  
-                  val stop = Button(this).apply {
-                      text = "🔴 APAGAR ROBOT"
-                      setBackgroundColor(Color.parseColor("#D50000"))
-                      setTextColor(Color.WHITE)
-                      typeface = Typeface.DEFAULT_BOLD
-                  }
-
-                  test.setOnClickListener {
-                      val p = prefs.getString("provider", "groq") ?: "groq"
-                      val key = Llm.clean(prefs.getString("key_" + p, "") ?: "")
-                      val typed = prefs.getString("model_" + p, "") ?: ""
-                      result.text = "Conectando con red cibernética..."
-                      Thread {
-                          val out = try {
-                              val q = JSONArray().put(JSONObject().put("role", "user").put("content", "Hola"))
-                              var m = typed.ifBlank { Llm.defaultModel(p) }
-                              val r = try {
-                                  Llm.chat(p, key, m, "Responde in espanol", q)
-                              } catch (e: Llm.LlmError) {
-                                  if (e.code != 400 && e.code != 404) throw e
-                                  m = Llm.pickModel(p, key)
-                                  Llm.chat(p, key, m, "Responde in espanol", q)
-                              }
-                              prefs.edit().putString("model_" + p, m).remove("lasterror").apply()
-                              "¡Enlace exitoso con el sistema!"
-                          } catch (e: Exception) {
-                              "Error: " + e.message
-                          }
-                          runOnUiThread { result.text = out }
-                      }.start()
-                  }
-
-                  start.setOnClickListener {
-                      if (!Settings.canDrawOverlays(this)) {
-                          startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA), 2)
-                      } else {
-                          startForegroundService(Intent(this, OverlayService::class.java))
-                          result.text = "🤖 Robot IA flotando en pantalla."
-                      }
-                  }
-
-                  stop.setOnClickListener {
-                      stopService(Intent(this, OverlayService::class.java))
-                      result.text = "🤖 Robot IA apagado."
-                  }
-
-                  rootLayout.addView(test)
-                  rootLayout.addView(start)
-                  rootLayout.addView(stop)
-
-                  setContentView(ScrollView(this).apply { 
-                      setBackgroundColor(Color.parseColor("#0B0F19"))
-                      addView(rootLayout) 
-                  })
-              }
-          }
-          EOF
-
-      - name: Compilar APK Masterpiece
-        run: gradle assembleDebug --no-daemon
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: robot-ia-apk-masterpiece
-          path: app/build/outputs/apk/debug/app-debug.apk
+          import android
