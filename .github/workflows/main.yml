@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 6
-                  versionName = "0.6"
+                  versionCode = 7
+                  versionName = "0.7"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -139,7 +139,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/0.6")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/0.7")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -207,170 +207,196 @@ jobs:
           }
           EOF
 
-          cat > app/src/main/java/com/robotia/app/MainActivity.kt <<'EOF'
+          cat > app/src/main/java/com/robotia/app/EyesView.kt <<'EOF'
           package com.robotia.app
 
-          import android.Manifest
-          import android.app.Activity
-          import android.content.Intent
-          import android.content.pm.PackageManager
-          import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.provider.Settings
-          import android.text.InputType
-          import android.view.Gravity
+          import android.animation.ValueAnimator
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.RectF
+          import android.os.Handler
+          import android.os.Looper
           import android.view.View
-          import android.widget.AdapterView
-          import android.widget.ArrayAdapter
-          import android.widget.Button
-          import android.widget.CheckBox
-          import android.widget.EditText
-          import android.widget.LinearLayout
-          import android.widget.ScrollView
-          import android.widget.Spinner
-          import android.widget.TextView
-          import org.json.JSONArray
-          import org.json.JSONObject
 
-          class MainActivity : Activity() {
-              private lateinit var result: TextView
-              private val prefs by lazy { getSharedPreferences("robot", MODE_PRIVATE) }
-              private val providers = listOf("groq", "mistral")
-              private var current: String? = null
+          class EyesView(ctx: Context) : View(ctx) {
+              companion object {
+                  const val IDLE = 0
+                  const val LISTENING = 1
+                  const val THINKING = 2
+                  const val SPEAKING = 3
 
-              override fun onResume() {
-                  super.onResume()
-                  val err = prefs.getString("lasterror", "") ?: ""
-                  if (err.isNotBlank()) result.text = "Ultimo error del robot: " + err
+                  val EXPR_NAMES = listOf(
+                      "neutral", "feliz", "triste", "enojado",
+                      "sorprendido", "amor", "sueno", "guino"
+                  )
+                  val COLOR_NAMES = listOf(
+                      "Cian", "Verde", "Azul", "Rosa", "Naranja", "Blanco", "Rojo", "Amarillo"
+                  )
+                  val COLORS = intArrayOf(
+                      Color.rgb(0, 229, 255), Color.rgb(60, 235, 120), Color.rgb(70, 130, 255),
+                      Color.rgb(255, 110, 190), Color.rgb(255, 150, 40), Color.WHITE,
+                      Color.rgb(255, 70, 70), Color.rgb(255, 220, 60)
+                  )
+                  val SHAPE_NAMES = listOf("Redondos", "Suaves", "Capsulas")
               }
 
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  val perms = mutableListOf(
-                      Manifest.permission.RECORD_AUDIO,
-                      Manifest.permission.CAMERA
-                  )
-                  if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.POST_NOTIFICATIONS")
-                  requestPermissions(perms.toTypedArray(), 1)
+              private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+              private val density = ctx.resources.displayMetrics.density
+              private var open = 1f
+              private var lx = 0f
+              private var ly = 0f
+              private var tracking = false
+              private val handler = Handler(Looper.getMainLooper())
 
-                  val pad = (24 * resources.displayMetrics.density).toInt()
-                  val layout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      gravity = Gravity.CENTER
-                      setPadding(pad, pad, pad, pad)
-                  }
-                  val info = TextView(this).apply {
-                      text = "1) Elige el servicio y pega tu clave. 2) Toca Probar clave. 3) Despierta los ojos: tocalos para hablar y ellos te siguen con la mirada."
-                  }
-                  val spinner = Spinner(this)
-                  spinner.adapter = ArrayAdapter(
-                      this,
-                      android.R.layout.simple_spinner_dropdown_item,
-                      listOf("Groq", "Mistral")
-                  )
-                  val keyBox = EditText(this).apply {
-                      hint = "clave de API"
-                      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                  }
-                  val modelBox = EditText(this).apply { hint = "modelo (se rellena solo)" }
-                  val track = CheckBox(this).apply {
-                      text = "Seguir mi cara con la camara frontal (gasta mas bateria)"
-                      isChecked = prefs.getBoolean("track", true)
-                  }
-                  result = TextView(this)
-                  val test = Button(this).apply { text = "Probar clave" }
-                  val start = Button(this).apply { text = "Despertar ojos" }
-                  val stop = Button(this).apply { text = "Dormir ojos" }
+              var eyeColor = COLORS[0]
+              var shape = 1
+              var sizeScale = 1f
 
-                  fun saveCurrent() {
-                      prefs.edit().putBoolean("track", track.isChecked).apply()
-                      val c = current ?: return
-                      prefs.edit()
-                          .putString("key_" + c, Llm.clean(keyBox.text.toString()))
-                          .putString("model_" + c, modelBox.text.toString().trim())
-                          .putString("provider", c)
-                          .apply()
+              var expression = 0
+                  set(v) {
+                      field = v
+                      invalidate()
                   }
 
-                  spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                      override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                          saveCurrent()
-                          val p = providers[pos]
-                          current = p
-                          keyBox.setText(prefs.getString("key_" + p, ""))
-                          modelBox.setText(prefs.getString("model_" + p, ""))
-                          modelBox.hint = Llm.defaultModel(p)
-                          prefs.edit().putString("provider", p).apply()
+              var state = IDLE
+                  set(v) {
+                      field = v
+                      if (v == IDLE) expression = 0
+                      invalidate()
+                  }
+
+              fun lookAt(x: Float, y: Float) {
+                  tracking = true
+                  val sx = lx
+                  val sy = ly
+                  val a = ValueAnimator.ofFloat(0f, 1f)
+                  a.duration = 200
+                  a.addUpdateListener {
+                      val t = it.animatedValue as Float
+                      lx = sx + (x - sx) * t
+                      ly = sy + (y - sy) * t
+                      invalidate()
+                  }
+                  a.start()
+              }
+
+              fun idleLook() {
+                  tracking = false
+              }
+
+              private val loop = object : Runnable {
+                  override fun run() {
+                      val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
+                      a.duration = 220
+                      a.addUpdateListener {
+                          open = it.animatedValue as Float
+                          invalidate()
                       }
-                      override fun onNothingSelected(parent: AdapterView<*>?) {}
-                  }
-                  val saved = prefs.getString("provider", "groq") ?: "groq"
-                  spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
-
-                  test.setOnClickListener {
-                      saveCurrent()
-                      val p = current ?: "groq"
-                      val key = Llm.clean(keyBox.text.toString())
-                      val typed = modelBox.text.toString().trim()
-                      result.text = "Probando..."
-                      Thread {
-                          val out = try {
-                              val q = JSONArray().put(
-                                  JSONObject().put("role", "user").put("content", "Di hola en una frase corta")
-                              )
-                              var m = typed.ifBlank { Llm.defaultModel(p) }
-                              val r = try {
-                                  Llm.chat(p, key, m, "Responde en espanol", q)
-                              } catch (e: Llm.LlmError) {
-                                  if (e.code != 400 && e.code != 404) throw e
-                                  m = Llm.pickModel(p, key)
-                                  Llm.chat(p, key, m, "Responde en espanol", q)
-                              }
-                              val finalModel = m
-                              prefs.edit().putString("model_" + p, finalModel).remove("lasterror").apply()
-                              runOnUiThread { modelBox.setText(finalModel) }
-                              "FUNCIONA con " + p + ". Modelo: " + finalModel + ". Respuesta: " + r
-                          } catch (e: Exception) {
-                              "FALLO: " + e.message
-                          }
-                          runOnUiThread { result.text = out }
-                      }.start()
-                  }
-
-                  start.setOnClickListener {
-                      saveCurrent()
-                      if (!Settings.canDrawOverlays(this)) {
-                          startActivity(
-                              Intent(
-                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                  Uri.parse("package:$packageName")
-                              )
-                          )
-                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                          != PackageManager.PERMISSION_GRANTED
-                      ) {
-                          requestPermissions(
-                              arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
-                              2
-                          )
-                      } else {
-                          startForegroundService(Intent(this, OverlayService::class.java))
+                      a.start()
+                      if (!tracking) {
+                          lx = (-1..1).random().toFloat() * 0.8f
+                          ly = 0f
                       }
+                      handler.postDelayed(this, (2500..5500).random().toLong())
                   }
-                  stop.setOnClickListener {
-                      stopService(Intent(this, OverlayService::class.java))
+              }
+
+              init {
+                  handler.post(loop)
+              }
+
+              fun stopBlinking() {
+                  handler.removeCallbacks(loop)
+              }
+
+              override fun onMeasure(w: Int, h: Int) {
+                  setMeasuredDimension(
+                      (110 * density * sizeScale).toInt(),
+                      (40 * density * sizeScale).toInt()
+                  )
+              }
+
+              override fun onDraw(c: Canvas) {
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  c.drawRoundRect(0f, 0f, w, h, h / 2, h / 2, bgPaint)
+                  var eh = h * 0.34f
+                  if (state == LISTENING) eh *= 1.12f
+                  if (expression == 4) eh *= 1.2f
+                  val ew = when (shape) {
+                      0 -> eh * 0.95f
+                      2 -> eh * 0.6f
+                      else -> eh * 1.05f
                   }
-                  layout.addView(info)
-                  layout.addView(spinner)
-                  layout.addView(keyBox)
-                  layout.addView(modelBox)
-                  layout.addView(track)
-                  layout.addView(test)
-                  layout.addView(result)
-                  layout.addView(start)
-                  layout.addView(stop)
-                  setContentView(ScrollView(this).apply { addView(layout) })
+                  val rr = if (shape == 1) eh * 0.45f else eh
+                  val cy = h / 2
+                  val dx = if (state == THINKING) 0.8f else lx
+                  val dy = if (state == THINKING) -0.8f else ly
+                  for (i in 0..1) {
+                      fill.color = eyeColor
+                      val cx = (if (i == 0) w * 0.3f else w * 0.7f) + dx * eh * 0.45f
+                      drawEye(c, i, cx, cy + dy * eh * 0.3f, ew, eh, rr)
+                  }
+              }
+
+              private fun drawEye(
+                  c: Canvas, i: Int, cx: Float, cy: Float, ew: Float, eh: Float, rr: Float
+              ) {
+                  val ex = expression
+                  if (ex == 5) {
+                      heart(c, cx, cy, eh)
+                      return
+                  }
+                  var hh = eh * open
+                  if (ex == 7 && i == 1) hh = eh * 0.12f
+                  if (hh < 1f) hh = 1f
+                  val rect = RectF(cx - ew, cy - hh, cx + ew, cy + hh)
+                  val r = minOf(rr, ew, hh)
+                  val path = Path()
+                  path.addRoundRect(rect, r, r, Path.Direction.CW)
+                  c.save()
+                  c.clipPath(path)
+                  c.drawRect(rect, fill)
+                  val top = cy - hh
+                  val tall = hh * 2
+                  fun lid(inner: Float, outer: Float) {
+                      val yl = top + tall * (if (i == 0) outer else inner)
+                      val yr = top + tall * (if (i == 0) inner else outer)
+                      val p = Path()
+                      p.moveTo(cx - ew - 2f, top - 2f)
+                      p.lineTo(cx + ew + 2f, top - 2f)
+                      p.lineTo(cx + ew + 2f, yr)
+                      p.lineTo(cx - ew - 2f, yl)
+                      p.close()
+                      c.drawPath(p, bgPaint)
+                  }
+                  when (ex) {
+                      1 -> c.drawOval(
+                          RectF(cx - ew * 1.3f, cy + hh * 0.15f, cx + ew * 1.3f, cy + hh * 2.2f),
+                          bgPaint
+                      )
+                      2 -> lid(0.05f, 0.55f)
+                      3 -> lid(0.6f, 0.05f)
+                      6 -> lid(0.5f, 0.5f)
+                      else -> if (state == THINKING) lid(0.2f, 0.2f)
+                  }
+                  c.restore()
+              }
+
+              private fun heart(c: Canvas, cx: Float, cy: Float, eh: Float) {
+                  val s = eh * 0.75f * (0.85f + 0.15f * open)
+                  val p = Path()
+                  p.moveTo(cx, cy + s)
+                  p.cubicTo(cx - s * 1.6f, cy - s * 0.2f, cx - s * 0.7f, cy - s * 1.3f, cx, cy - s * 0.45f)
+                  p.cubicTo(cx + s * 0.7f, cy - s * 1.3f, cx + s * 1.6f, cy - s * 0.2f, cx, cy + s)
+                  p.close()
+                  fill.color = Color.rgb(255, 80, 120)
+                  c.drawPath(p, fill)
+                  fill.color = eyeColor
               }
           }
           EOF
@@ -384,6 +410,7 @@ jobs:
           import android.app.NotificationManager
           import android.app.Service
           import android.content.Intent
+          import android.content.SharedPreferences
           import android.content.pm.PackageManager
           import android.content.pm.ServiceInfo
           import android.graphics.Bitmap
@@ -415,19 +442,22 @@ jobs:
           import org.json.JSONArray
           import org.json.JSONObject
           import java.nio.ShortBuffer
+          import java.text.Normalizer
           import java.util.Locale
           import kotlin.math.abs
 
           class OverlayService : Service() {
               companion object {
-                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas, porque tus respuestas se leen en voz alta. No uses listas ni simbolos."
+                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas, porque tus respuestas se leen en voz alta. No uses listas ni simbolos. Empieza SIEMPRE tu respuesta con una etiqueta entre corchetes que indique tu emocion: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] o [guino]. Despues de la etiqueta escribe la respuesta."
               }
 
               private lateinit var wm: WindowManager
+              private lateinit var params: WindowManager.LayoutParams
               private lateinit var eyes: EyesView
               private val handler = Handler(Looper.getMainLooper())
               private var recognizer: SpeechRecognizer? = null
               private var tts: TextToSpeech? = null
+              private var ttsReady = false
               private val history = JSONArray()
               private var turn = 0
 
@@ -441,7 +471,64 @@ jobs:
               private var lastFace = 0L
               private var lastSeen = 0L
 
+              private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
+                  if (key == "preview") {
+                      val name = (sp.getString("preview", "") ?: "").substringBefore("|")
+                      val idx = EyesView.EXPR_NAMES.indexOf(name)
+                      if (idx >= 0) {
+                          handler.post {
+                              eyes.expression = idx
+                              handler.postDelayed({
+                                  if (eyes.state == EyesView.IDLE) eyes.expression = 0
+                              }, 2500)
+                          }
+                      }
+                  } else if (key != "lasterror" && key != "posx" && key != "posy") {
+                      handler.post { applyPrefs() }
+                  }
+              }
+
               override fun onBind(intent: Intent?): IBinder? = null
+
+              private fun island(): Boolean =
+                  getSharedPreferences("robot", MODE_PRIVATE).getBoolean("island", true)
+
+              private fun applyPrefs() {
+                  val sp = getSharedPreferences("robot", MODE_PRIVATE)
+                  eyes.eyeColor = EyesView.COLORS[sp.getInt("eye_color", 0).coerceIn(0, EyesView.COLORS.size - 1)]
+                  eyes.shape = sp.getInt("eye_shape", 1).coerceIn(0, 2)
+                  eyes.sizeScale = sp.getFloat("eye_scale", 1f)
+                  val d = resources.displayMetrics.density
+                  if (sp.getBoolean("island", true)) {
+                      params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                      params.x = 0
+                      params.y = (10 * d).toInt()
+                  } else {
+                      params.gravity = Gravity.TOP or Gravity.START
+                      params.x = sp.getInt("posx", 300)
+                      params.y = sp.getInt("posy", 60)
+                  }
+                  eyes.requestLayout()
+                  eyes.invalidate()
+                  try {
+                      wm.updateViewLayout(eyes, params)
+                  } catch (e: Exception) {
+                  }
+                  if (ttsReady) applyVoice(sp)
+              }
+
+              private fun applyVoice(sp: SharedPreferences) {
+                  tts?.setSpeechRate(sp.getFloat("tts_rate", 1f))
+                  tts?.setPitch(sp.getFloat("tts_pitch", 1f))
+                  val name = sp.getString("tts_voice", "") ?: ""
+                  if (name.isNotBlank()) {
+                      try {
+                          val v = tts?.voices?.firstOrNull { it.name == name }
+                          if (v != null) tts?.voice = v
+                      } catch (e: Exception) {
+                      }
+                  }
+              }
 
               override fun onCreate() {
                   super.onCreate()
@@ -481,11 +568,13 @@ jobs:
                                   handler.post { eyes.state = EyesView.IDLE }
                               }
                           })
+                          ttsReady = true
+                          applyVoice(prefs)
                       }
                   }
 
                   wm = getSystemService(WINDOW_SERVICE) as WindowManager
-                  val params = WindowManager.LayoutParams(
+                  params = WindowManager.LayoutParams(
                       WindowManager.LayoutParams.WRAP_CONTENT,
                       WindowManager.LayoutParams.WRAP_CONTENT,
                       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -493,9 +582,7 @@ jobs:
                           WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                       PixelFormat.TRANSLUCENT
                   )
-                  params.gravity = Gravity.TOP or Gravity.START
-                  params.x = 300
-                  params.y = 60
+                  params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
 
                   eyes = EyesView(this)
                   var startX = 0
@@ -516,17 +603,28 @@ jobs:
                               val dx = (e.rawX - touchX).toInt()
                               val dy = (e.rawY - touchY).toInt()
                               if (abs(dx) > 15 || abs(dy) > 15) moved = true
-                              params.x = startX + dx
-                              params.y = startY + dy
-                              wm.updateViewLayout(eyes, params)
+                              if (!island()) {
+                                  params.x = startX + dx
+                                  params.y = startY + dy
+                                  wm.updateViewLayout(eyes, params)
+                              }
                           }
                           MotionEvent.ACTION_UP -> {
-                              if (!moved) onTap()
+                              if (!moved) {
+                                  onTap()
+                              } else if (!island()) {
+                                  prefs.edit()
+                                      .putInt("posx", params.x)
+                                      .putInt("posy", params.y)
+                                      .apply()
+                              }
                           }
                       }
                       true
                   }
                   wm.addView(eyes, params)
+                  applyPrefs()
+                  prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
                   if (camOk) startCamera()
               }
@@ -702,7 +800,7 @@ jobs:
 
               private fun listen() {
                   if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                      speak("No tengo reconocimiento de voz en este celular")
+                      speak("No tengo reconocimiento de voz en este celular", "triste")
                       return
                   }
                   recognizer?.destroy()
@@ -761,6 +859,15 @@ jobs:
                   }
               }
 
+              private fun parseEmotion(reply: String): Pair<String, String> {
+                  val m = Regex("^\\s*\\[([^\\]]{1,15})\\]\\s*").find(reply) ?: return Pair("", reply)
+                  val raw = Normalizer.normalize(m.groupValues[1].lowercase(), Normalizer.Form.NFD)
+                      .replace(Regex("\\p{M}"), "")
+                  val idx = EyesView.EXPR_NAMES.indexOfFirst { raw.startsWith(it.take(3)) }
+                  val text = reply.substring(m.range.last + 1).ifBlank { reply }
+                  return Pair(if (idx >= 0) EyesView.EXPR_NAMES[idx] else "", text)
+              }
+
               private fun ask(text: String) {
                   eyes.state = EyesView.THINKING
                   history.put(msg("user", text))
@@ -790,19 +897,28 @@ jobs:
                                   history.remove(0)
                                   history.remove(0)
                               }
-                              speak(reply)
+                              if (f == null) {
+                                  val parsed = parseEmotion(reply)
+                                  speak(parsed.second, parsed.first)
+                              } else {
+                                  speak(reply, "triste")
+                              }
                           }
                       }
                   }.start()
               }
 
-              private fun speak(text: String) {
+              private fun speak(text: String, emo: String = "") {
                   eyes.state = EyesView.SPEAKING
+                  val idx = EyesView.EXPR_NAMES.indexOf(emo)
+                  eyes.expression = if (idx > 0) idx else 0
                   tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "robot")
               }
 
               override fun onDestroy() {
                   turn++
+                  getSharedPreferences("robot", MODE_PRIVATE)
+                      .unregisterOnSharedPreferenceChangeListener(prefListener)
                   stopCamera()
                   recognizer?.destroy()
                   tts?.shutdown()
@@ -815,110 +931,312 @@ jobs:
           }
           EOF
 
-          cat > app/src/main/java/com/robotia/app/EyesView.kt <<'EOF'
+          cat > app/src/main/java/com/robotia/app/MainActivity.kt <<'EOF'
           package com.robotia.app
 
-          import android.animation.ValueAnimator
-          import android.content.Context
-          import android.graphics.Canvas
-          import android.graphics.Color
-          import android.graphics.Paint
-          import android.os.Handler
-          import android.os.Looper
+          import android.Manifest
+          import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.Typeface
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.speech.tts.TextToSpeech
+          import android.speech.tts.Voice
+          import android.text.InputType
+          import android.view.Gravity
           import android.view.View
+          import android.widget.AdapterView
+          import android.widget.ArrayAdapter
+          import android.widget.Button
+          import android.widget.CheckBox
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.SeekBar
+          import android.widget.Spinner
+          import android.widget.TextView
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.util.Locale
 
-          class EyesView(ctx: Context) : View(ctx) {
-              companion object {
-                  const val IDLE = 0
-                  const val LISTENING = 1
-                  const val THINKING = 2
-                  const val SPEAKING = 3
+          class MainActivity : Activity() {
+              private lateinit var result: TextView
+              private val prefs by lazy { getSharedPreferences("robot", MODE_PRIVATE) }
+              private val providers = listOf("groq", "mistral")
+              private var current: String? = null
+              private var tts: TextToSpeech? = null
+              private val voiceNames = ArrayList<String>()
+
+              override fun onResume() {
+                  super.onResume()
+                  val err = prefs.getString("lasterror", "") ?: ""
+                  if (err.isNotBlank()) result.text = "Ultimo error del robot: " + err
               }
 
-              private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-              private val pupil = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(20, 20, 40) }
-              private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(230, 15, 15, 30) }
-              private val density = ctx.resources.displayMetrics.density
-              private var open = 1f
-              private var lx = 0f
-              private var ly = 0f
-              private var tracking = false
-              private val handler = Handler(Looper.getMainLooper())
+              override fun onDestroy() {
+                  tts?.shutdown()
+                  super.onDestroy()
+              }
 
-              var state = IDLE
-                  set(v) {
-                      field = v
-                      pupil.color = when (v) {
-                          LISTENING -> Color.rgb(30, 120, 255)
-                          THINKING -> Color.rgb(255, 170, 0)
-                          SPEAKING -> Color.rgb(0, 170, 90)
-                          else -> Color.rgb(20, 20, 40)
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val perms = mutableListOf(
+                      Manifest.permission.RECORD_AUDIO,
+                      Manifest.permission.CAMERA
+                  )
+                  if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.POST_NOTIFICATIONS")
+                  requestPermissions(perms.toTypedArray(), 1)
+
+                  val pad = (24 * resources.displayMetrics.density).toInt()
+                  val layout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(pad, pad, pad, pad)
+                  }
+
+                  fun title(t: String) {
+                      layout.addView(TextView(this).apply {
+                          text = t
+                          textSize = 18f
+                          typeface = Typeface.DEFAULT_BOLD
+                          setPadding(0, pad, 0, 0)
+                      })
+                  }
+
+                  fun slider(name: String, key: String, min: Float, max: Float, def: Float) {
+                      val v = prefs.getFloat(key, def)
+                      val t = TextView(this)
+                      fun show(x: Float) {
+                          t.text = name + ": " + String.format(Locale.US, "%.2f", x)
                       }
-                      invalidate()
+                      show(v)
+                      val sb = SeekBar(this)
+                      sb.max = 100
+                      sb.progress = ((v - min) / (max - min) * 100f).toInt().coerceIn(0, 100)
+                      sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                          override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                              val x = min + (max - min) * p / 100f
+                              show(x)
+                              if (fromUser) prefs.edit().putFloat(key, x).apply()
+                          }
+                          override fun onStartTrackingTouch(s: SeekBar?) {}
+                          override fun onStopTrackingTouch(s: SeekBar?) {}
+                      })
+                      layout.addView(t)
+                      layout.addView(sb)
                   }
 
-              fun lookAt(x: Float, y: Float) {
-                  tracking = true
-                  val sx = lx
-                  val sy = ly
-                  val a = ValueAnimator.ofFloat(0f, 1f)
-                  a.duration = 200
-                  a.addUpdateListener {
-                      val t = it.animatedValue as Float
-                      lx = sx + (x - sx) * t
-                      ly = sy + (y - sy) * t
-                      invalidate()
-                  }
-                  a.start()
-              }
-
-              fun idleLook() {
-                  tracking = false
-              }
-
-              private val loop = object : Runnable {
-                  override fun run() {
-                      val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
-                      a.duration = 220
-                      a.addUpdateListener {
-                          open = it.animatedValue as Float
-                          invalidate()
+                  fun choice(name: String, key: String, options: List<String>, def: Int) {
+                      layout.addView(TextView(this).apply { text = name })
+                      val sp = Spinner(this)
+                      sp.adapter = ArrayAdapter(
+                          this, android.R.layout.simple_spinner_dropdown_item, options
+                      )
+                      sp.setSelection(prefs.getInt(key, def).coerceIn(0, options.size - 1))
+                      sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                          override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                              if (prefs.getInt(key, def) != pos) prefs.edit().putInt(key, pos).apply()
+                          }
+                          override fun onNothingSelected(parent: AdapterView<*>?) {}
                       }
-                      a.start()
-                      if (!tracking) {
-                          lx = (-1..1).random().toFloat() * 0.8f
-                          ly = 0f
+                      layout.addView(sp)
+                  }
+
+                  val info = TextView(this).apply {
+                      text = "1) Elige el servicio y pega tu clave. 2) Toca Probar clave. 3) Despierta los ojos: tocalos para hablar y ellos te siguen con la mirada."
+                  }
+                  val spinner = Spinner(this)
+                  spinner.adapter = ArrayAdapter(
+                      this,
+                      android.R.layout.simple_spinner_dropdown_item,
+                      listOf("Groq", "Mistral")
+                  )
+                  val keyBox = EditText(this).apply {
+                      hint = "clave de API"
+                      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                  }
+                  val modelBox = EditText(this).apply { hint = "modelo (se rellena solo)" }
+                  val track = CheckBox(this).apply {
+                      text = "Seguir mi cara con la camara frontal (gasta mas bateria)"
+                      isChecked = prefs.getBoolean("track", true)
+                  }
+                  result = TextView(this)
+                  val test = Button(this).apply { text = "Probar clave" }
+                  val start = Button(this).apply { text = "Despertar ojos" }
+                  val stop = Button(this).apply { text = "Dormir ojos" }
+
+                  fun saveCurrent() {
+                      prefs.edit().putBoolean("track", track.isChecked).apply()
+                      val c = current ?: return
+                      prefs.edit()
+                          .putString("key_" + c, Llm.clean(keyBox.text.toString()))
+                          .putString("model_" + c, modelBox.text.toString().trim())
+                          .putString("provider", c)
+                          .apply()
+                  }
+
+                  spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                          saveCurrent()
+                          val p = providers[pos]
+                          current = p
+                          keyBox.setText(prefs.getString("key_" + p, ""))
+                          modelBox.setText(prefs.getString("model_" + p, ""))
+                          modelBox.hint = Llm.defaultModel(p)
+                          prefs.edit().putString("provider", p).apply()
                       }
-                      handler.postDelayed(this, (2500..5500).random().toLong())
+                      override fun onNothingSelected(parent: AdapterView<*>?) {}
                   }
-              }
+                  val saved = prefs.getString("provider", "groq") ?: "groq"
+                  spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
 
-              init {
-                  handler.post(loop)
-              }
-
-              fun stopBlinking() {
-                  handler.removeCallbacks(loop)
-              }
-
-              override fun onMeasure(w: Int, h: Int) {
-                  setMeasuredDimension((150 * density).toInt(), (70 * density).toInt())
-              }
-
-              override fun onDraw(c: Canvas) {
-                  val w = width.toFloat()
-                  val h = height.toFloat()
-                  c.drawRoundRect(0f, 0f, w, h, h / 2, h / 2, bg)
-                  val r = h * 0.32f
-                  val pr = if (state == LISTENING) r * 0.65f else r * 0.5f
-                  val cy = h / 2
-                  for (cx in floatArrayOf(w * 0.3f, w * 0.7f)) {
-                      c.save()
-                      c.scale(1f, open, cx, cy)
-                      c.drawCircle(cx, cy, r, white)
-                      c.drawCircle(cx + lx * r * 0.35f, cy + ly * r * 0.3f, pr, pupil)
-                      c.restore()
+                  test.setOnClickListener {
+                      saveCurrent()
+                      val p = current ?: "groq"
+                      val key = Llm.clean(keyBox.text.toString())
+                      val typed = modelBox.text.toString().trim()
+                      result.text = "Probando..."
+                      Thread {
+                          val out = try {
+                              val q = JSONArray().put(
+                                  JSONObject().put("role", "user").put("content", "Di hola en una frase corta")
+                              )
+                              var m = typed.ifBlank { Llm.defaultModel(p) }
+                              val r = try {
+                                  Llm.chat(p, key, m, "Responde en espanol", q)
+                              } catch (e: Llm.LlmError) {
+                                  if (e.code != 400 && e.code != 404) throw e
+                                  m = Llm.pickModel(p, key)
+                                  Llm.chat(p, key, m, "Responde en espanol", q)
+                              }
+                              val finalModel = m
+                              prefs.edit().putString("model_" + p, finalModel).remove("lasterror").apply()
+                              runOnUiThread { modelBox.setText(finalModel) }
+                              "FUNCIONA con " + p + ". Modelo: " + finalModel + ". Respuesta: " + r
+                          } catch (e: Exception) {
+                              "FALLO: " + e.message
+                          }
+                          runOnUiThread { result.text = out }
+                      }.start()
                   }
+
+                  start.setOnClickListener {
+                      saveCurrent()
+                      if (!Settings.canDrawOverlays(this)) {
+                          startActivity(
+                              Intent(
+                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:$packageName")
+                              )
+                          )
+                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                          != PackageManager.PERMISSION_GRANTED
+                      ) {
+                          requestPermissions(
+                              arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
+                              2
+                          )
+                      } else {
+                          startForegroundService(Intent(this, OverlayService::class.java))
+                      }
+                  }
+                  stop.setOnClickListener {
+                      stopService(Intent(this, OverlayService::class.java))
+                  }
+
+                  layout.addView(info)
+                  layout.addView(spinner)
+                  layout.addView(keyBox)
+                  layout.addView(modelBox)
+                  layout.addView(track)
+                  layout.addView(test)
+                  layout.addView(result)
+                  layout.addView(start)
+                  layout.addView(stop)
+
+                  title("Personalizar ojos")
+                  choice("Forma", "eye_shape", EyesView.SHAPE_NAMES, 1)
+                  choice("Color", "eye_color", EyesView.COLOR_NAMES, 0)
+                  slider("Tamano", "eye_scale", 0.6f, 1.6f, 1.0f)
+                  layout.addView(CheckBox(this).apply {
+                      text = "Modo isla (fijo arriba al centro, como el iPhone)"
+                      isChecked = prefs.getBoolean("island", true)
+                      setOnCheckedChangeListener { _, on ->
+                          prefs.edit().putBoolean("island", on).apply()
+                      }
+                  })
+                  layout.addView(TextView(this).apply { text = "Probar una expresion (con los ojos despiertos):" })
+                  val exprSpinner = Spinner(this)
+                  exprSpinner.adapter = ArrayAdapter(
+                      this, android.R.layout.simple_spinner_dropdown_item, EyesView.EXPR_NAMES
+                  )
+                  layout.addView(exprSpinner)
+                  layout.addView(Button(this).apply {
+                      text = "Mostrar expresion"
+                      setOnClickListener {
+                          val name = EyesView.EXPR_NAMES[exprSpinner.selectedItemPosition]
+                          prefs.edit()
+                              .putString("preview", name + "|" + System.currentTimeMillis())
+                              .apply()
+                      }
+                  })
+
+                  title("Personalizar voz")
+                  val voiceSpinner = Spinner(this)
+                  layout.addView(TextView(this).apply { text = "Voz" })
+                  layout.addView(voiceSpinner)
+                  voiceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                          if (pos < voiceNames.size) {
+                              val n = voiceNames[pos]
+                              if ((prefs.getString("tts_voice", "") ?: "") != n) {
+                                  prefs.edit().putString("tts_voice", n).apply()
+                              }
+                          }
+                      }
+                      override fun onNothingSelected(parent: AdapterView<*>?) {}
+                  }
+                  slider("Velocidad", "tts_rate", 0.5f, 2.0f, 1.0f)
+                  slider("Tono", "tts_pitch", 0.5f, 2.0f, 1.0f)
+                  layout.addView(Button(this).apply {
+                      text = "Probar voz"
+                      setOnClickListener {
+                          val t = tts
+                          if (t != null) {
+                              t.setSpeechRate(prefs.getFloat("tts_rate", 1f))
+                              t.setPitch(prefs.getFloat("tts_pitch", 1f))
+                              val name = prefs.getString("tts_voice", "") ?: ""
+                              val v = t.voices?.firstOrNull { it.name == name }
+                              if (v != null) t.voice = v else t.language = Locale.getDefault()
+                              t.speak("Hola, asi sueno yo", TextToSpeech.QUEUE_FLUSH, null, "test")
+                          }
+                      }
+                  })
+
+                  tts = TextToSpeech(this) { st ->
+                      if (st == TextToSpeech.SUCCESS) {
+                          val all: Set<Voice> = tts?.voices ?: emptySet()
+                          val list = all.filter { it.locale.language == "es" }.sortedBy { it.name }
+                          runOnUiThread {
+                              voiceNames.clear()
+                              voiceNames.add("")
+                              list.forEach { voiceNames.add(it.name) }
+                              val labels = ArrayList<String>()
+                              labels.add("Voz por defecto")
+                              list.forEach { labels.add(it.name + " (" + it.locale + ")") }
+                              voiceSpinner.adapter = ArrayAdapter(
+                                  this, android.R.layout.simple_spinner_dropdown_item, labels
+                              )
+                              val cur = prefs.getString("tts_voice", "") ?: ""
+                              voiceSpinner.setSelection(voiceNames.indexOf(cur).coerceAtLeast(0))
+                          }
+                      }
+                  }
+
+                  setContentView(ScrollView(this).apply { addView(layout) })
               }
           }
           EOF
