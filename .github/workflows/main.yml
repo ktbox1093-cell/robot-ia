@@ -1,4 +1,4 @@
-name: Build APK Robot IA Custom Limit
+name: Build APK Robot IA Masterpiece
 
 on:
   workflow_dispatch:
@@ -23,6 +23,8 @@ jobs:
       - name: Generar proyecto Android
         run: |
           mkdir -p app/src/main/java/com/robotia/app
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
+          mkdir -p app/src/main/res/drawable
 
           cat > settings.gradle.kts <<'EOF'
           pluginManagement {
@@ -65,8 +67,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 15
-                  versionName = "1.5"
+                  versionCode = 16
+                  versionName = "1.6"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -97,6 +99,8 @@ jobs:
               </queries>
               <application
                   android:label="Robot IA"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
                   android:theme="@android:style/Theme.Material.Light.NoActionBar">
                   <activity android:name=".MainActivity" android:exported="true">
                       <intent-filter>
@@ -114,6 +118,34 @@ jobs:
                   </service>
               </application>
           </manifest>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_robot_logo.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#0B0F19"
+                  android:pathData="M0,0h108v108h-108z"/>
+              <path
+                  android:fillColor="#00E5FF"
+                  android:pathData="M30,42h16v24h-16zM62,42h16v24h-16z"/>
+          </vector>
+          EOF
+
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_robot_logo"/>
+          </adaptive-icon>
+          EOF
+
+          cat > app/src/main/res/values/colors.xml <<'EOF'
+          <resources>
+              <color name="ic_launcher_background">#0B0F19</color>
+          </resources>
           EOF
 
           cat > app/src/main/java/com/robotia/app/Llm.kt <<'EOF'
@@ -142,7 +174,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.5")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.6")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -439,6 +471,28 @@ jobs:
               private var lastFace = 0L
               private var lastSeen = 0L
 
+              // Sonidos de robot R2D2 / Cozmo en inactividad
+              private val r2d2Sounds = listOf("bip bop bzzzt", "wub wup beep", "chirp zzt boop", "whirrr bip", "piip bloop zzt")
+              private val idleSoundRunnable = object : Runnable {
+                  override fun run() {
+                      if (ttsReady && eyes.state == EyesView.IDLE) {
+                          val randomSound = r2d2Sounds.random()
+                          val randomExpr = (1..7).random()
+                          eyes.expression = randomExpr
+                          val prefs = getSharedPreferences("robot", MODE_PRIVATE)
+                          val pitch = prefs.getFloat("voice_pitch", 1.2f)
+                          val speed = prefs.getFloat("voice_speed", 1.1f)
+                          tts?.setPitch(pitch)
+                          tts?.setSpeechRate(speed)
+                          tts?.speak(randomSound, TextToSpeech.QUEUE_FLUSH, null, "r2d2")
+                          handler.postDelayed({
+                              if (eyes.state == EyesView.IDLE) eyes.expression = 0
+                          }, 1500)
+                      }
+                      handler.postDelayed(this, (8000..15000).random().toLong())
+                  }
+              }
+
               private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
                   if (key == "preview") {
                       val name = (sp.getString("preview", "") ?: "").substringBefore("|")
@@ -460,7 +514,7 @@ jobs:
                       } else {
                           stopCamera()
                       }
-                  } else if (key == "eye_color" || key == "eye_shape" || key == "eye_scale") {
+                  } else if (key == "eye_color" || key == "eye_shape" || key == "eye_scale" || key == "voice_pitch" || key == "voice_speed") {
                       handler.post { applyPrefs() }
                   }
               }
@@ -473,6 +527,11 @@ jobs:
                   eyes.shape = sp.getInt("eye_shape", 1).coerceIn(0, 2)
                   eyes.sizeScale = sp.getFloat("eye_scale", 1f)
                   
+                  val pitch = sp.getFloat("voice_pitch", 1.2f)
+                  val speed = sp.getFloat("voice_speed", 1.1f)
+                  tts?.setPitch(pitch)
+                  tts?.setSpeechRate(speed)
+
                   params.gravity = Gravity.TOP or Gravity.START
                   params.x = sp.getInt("posx", 300)
                   params.y = sp.getInt("posy", 60)
@@ -512,6 +571,11 @@ jobs:
                   tts = TextToSpeech(this) { status ->
                       if (status == TextToSpeech.SUCCESS) {
                           tts?.language = Locale.getDefault()
+                          val pitch = prefs.getFloat("voice_pitch", 1.2f)
+                          val speed = prefs.getFloat("voice_speed", 1.1f)
+                          tts?.setPitch(pitch)
+                          tts?.setSpeechRate(speed)
+
                           tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                               override fun onStart(id: String?) {}
                               override fun onDone(id: String?) {
@@ -523,7 +587,7 @@ jobs:
                               }
                           })
                           ttsReady = true
-                          speak("¡Hola! Sistema cibernético listo.", "feliz")
+                          speak("¡Bip bop! Hola, sistema activo.", "feliz")
                       }
                   }
 
@@ -582,6 +646,9 @@ jobs:
                   wm.addView(eyes, params)
                   applyPrefs()
                   prefs.registerOnSharedPreferenceChangeListener(prefListener)
+
+                  // Iniciar sonidos automáticos R2D2 en inactividad
+                  handler.postDelayed(idleSoundRunnable, 10000)
 
                   if (camOk) startCamera()
               }
@@ -971,6 +1038,7 @@ jobs:
 
               override fun onDestroy() {
                   turn++
+                  handler.removeCallbacks(idleSoundRunnable)
                   getSharedPreferences("robot", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefListener)
                   stopCamera()
                   recognizer?.destroy()
@@ -1011,7 +1079,6 @@ jobs:
           import android.widget.EditText
           import android.widget.LinearLayout
           import android.widget.ScrollView
-          import android.widget.SeekBar
           import android.widget.Spinner
           import android.widget.TextView
           import org.json.JSONArray
@@ -1032,8 +1099,7 @@ jobs:
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  
-                  // Límite de 3 modificaciones para PERSONALIZAR EL ROBOT (ojos, colores, forma)
+
                   val robotEditCount = prefs.getInt("robot_edit_count", 0)
                   val lastRobotChange = prefs.getLong("last_robot_change", 0L)
                   val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000L
@@ -1077,53 +1143,95 @@ jobs:
                   rootLayout.addView(logoView)
 
                   val info = TextView(this).apply {
-                      text = "Asistente Cibernético Profesional\n• API Key fija y permanente\n• Personalizaciones de robot: $robotEditCount / 3"
+                      text = "Asistente Cibernético Profesional\n• Personalizaciones del robot: $robotEditCount / 3"
                       setTextColor(Color.parseColor("#A0AEC0"))
                       textSize = 14f
                       gravity = Gravity.CENTER
                   }
                   rootLayout.addView(info)
 
-                  // 1. SECCIÓN DE API KEY (SIEMPRE FIJA Y DISPONIBLE)
-                  val apiKeyTitle = TextView(this).apply {
-                      text = "🔑 Configuración de API Key"
-                      setTextColor(Color.parseColor("#00E5FF"))
-                      textSize = 16f
-                      typeface = Typeface.DEFAULT_BOLD
-                      setPadding(0, 20, 0, 10)
+                  // VERIFICAR SI YA EXISTE API KEY GUARDADA (para que no vuelva a aparecer pidiéndola)
+                  val existingGroq = prefs.getString("key_groq", "") ?: ""
+                  val existingMistral = prefs.getString("key_mistral", "") ?: ""
+                  val hasApiKey = existingGroq.isNotBlank() || existingMistral.isNotBlank()
+
+                  val apiKeyContainer = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(0, 15, 0, 15)
                   }
-                  rootLayout.addView(apiKeyTitle)
 
-                  val spinner = Spinner(this)
-                  spinner.adapter = ArrayAdapter(
-                      this,
-                      android.R.layout.simple_spinner_dropdown_item,
-                      listOf("Groq (Ultra Rápido)", "Mistral")
-                  )
-                  rootLayout.addView(spinner)
+                  if (hasApiKey) {
+                      val savedNotice = TextView(this).apply {
+                          text = "🔒 API Key guardada y asegurada de forma permanente."
+                          setTextColor(Color.parseColor("#00C853"))
+                          textSize = 14f
+                          typeface = Typeface.DEFAULT_BOLD
+                          gravity = Gravity.CENTER
+                          setPadding(0, 10, 0, 10)
+                      }
+                      apiKeyContainer.addView(savedNotice)
+                  } else {
+                      val spinner = Spinner(this)
+                      spinner.adapter = ArrayAdapter(
+                          this,
+                          android.R.layout.simple_spinner_dropdown_item,
+                          listOf("Groq (Ultra Rápido)", "Mistral")
+                      )
+                      apiKeyContainer.addView(spinner)
 
-                  val keyBox = EditText(this).apply {
-                      hint = "Introduce tu clave API personal"
-                      setHintTextColor(Color.parseColor("#718096"))
-                      setTextColor(Color.WHITE)
-                      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                      setBackgroundColor(Color.parseColor("#1A202C"))
-                      setPadding(20, 25, 20, 25)
+                      val keyBox = EditText(this).apply {
+                          hint = "Introduce tu clave API personal"
+                          setHintTextColor(Color.parseColor("#718096"))
+                          setTextColor(Color.WHITE)
+                          inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                          setBackgroundColor(Color.parseColor("#1A202C"))
+                          setPadding(20, 25, 20, 25)
+                      }
+                      apiKeyContainer.addView(keyBox)
+
+                      val modelBox = EditText(this).apply {
+                          hint = "Modelo automático"
+                          setHintTextColor(Color.parseColor("#718096"))
+                          setTextColor(Color.WHITE)
+                          setBackgroundColor(Color.parseColor("#1A202C"))
+                          setPadding(20, 25, 20, 25)
+                      }
+                      apiKeyContainer.addView(modelBox)
+
+                      spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                          override fun onItemSelected(parent: AdapterView<*>, v: View?, pos: Int, id: Long) {
+                              val p = providers[pos]
+                              current = p
+                              keyBox.setText(prefs.getString("key_" + p, ""))
+                              modelBox.setText(prefs.getString("model_" + p, ""))
+                              modelBox.hint = Llm.defaultModel(p)
+                          }
+                          override fun onNothingSelected(parent: AdapterView<*>) {}
+                      }
+                      val saved = prefs.getString("provider", "groq") ?: "groq"
+                      spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
+
+                      keyBox.addTextChangedListener(object : android.text.TextWatcher {
+                          override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                          override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                              val c = current ?: return
+                              val typedKey = Llm.clean(keyBox.text.toString())
+                              if (typedKey.isNotBlank()) {
+                                  prefs.edit()
+                                      .putString("key_" + c, typedKey)
+                                      .putString("model_" + c, modelBox.text.toString().trim())
+                                      .putString("provider", c)
+                                      .apply()
+                              }
+                          }
+                          override fun afterTextChanged(s: android.text.Editable?) {}
+                      })
                   }
-                  rootLayout.addView(keyBox)
+                  rootLayout.addView(apiKeyContainer)
 
-                  val modelBox = EditText(this).apply {
-                      hint = "Modelo automático"
-                      setHintTextColor(Color.parseColor("#718096"))
-                      setTextColor(Color.WHITE)
-                      setBackgroundColor(Color.parseColor("#1A202C"))
-                      setPadding(20, 25, 20, 25)
-                  }
-                  rootLayout.addView(modelBox)
-
-                  // 2. BOTÓN DE PERSONALIZACIÓN DEL ROBOT (CON LÍMITE DE 3 INTENTOS)
+                  // MENÚ DE PERSONALIZACIÓN DEL ROBOT (Voz, tamaño de ojos, color y gestos) con 3 intentos
                   val btnToggleCustom = Button(this).apply {
-                      text = "⚙️ Personalizar Apariencia del Robot"
+                      text = "⚙️ Personalizar Robot (Voz, Ojos, Gestos)"
                       setBackgroundColor(Color.parseColor("#1A202C"))
                       setTextColor(Color.parseColor("#00E5FF"))
                       typeface = Typeface.DEFAULT_BOLD
@@ -1140,7 +1248,7 @@ jobs:
 
                   if (!canCustomizeRobot) {
                       val lockedMsg = TextView(this).apply {
-                          text = "⚠️ Límite de 3 personalizaciones del robot alcanzado. Dentro de 1 semana podrás volver a modificar sus ojos."
+                          text = "⚠️ Límite de 3 personalizaciones del robot alcanzado. Dentro de 1 semana podrás volver a modificar sus ajustes."
                           setTextColor(Color.parseColor("#FF5252"))
                           textSize = 13f
                           gravity = Gravity.CENTER
@@ -1149,7 +1257,7 @@ jobs:
                       robotCustomContainer.addView(lockedMsg)
                   } else {
                       val customInfo = TextView(this).apply {
-                          text = "Personaliza la forma y color de los ojos flotantes:"
+                          text = "Ajusta voz, tamaño de ojos, color y gestos:"
                           setTextColor(Color.WHITE)
                           textSize = 13f
                           setPadding(10, 5, 10, 5)
@@ -1183,8 +1291,40 @@ jobs:
                           robotCustomContainer.addView(sp)
                       }
 
-                      choice("Forma de los ojos", "eye_shape", listOf("Redondos", "Suaves", "Cápsulas"), 1)
-                      choice("Color de los ojos", "eye_color", listOf("Cian Tech", "Verde Matrix", "Azul Neón", "Rosa Fucsia", "Naranja Pro", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"), 0)
+                      fun choiceFloat(name: String, key: String, options: List<String>, values: List<Float>, def: Float) {
+                          robotCustomContainer.addView(TextView(this).apply { 
+                              text = name
+                              setTextColor(Color.parseColor("#A0AEC0"))
+                              setPadding(10, 5, 10, 2)
+                          })
+                          val sp = Spinner(this)
+                          sp.adapter = ArrayAdapter(
+                              this, android.R.layout.simple_spinner_dropdown_item, options
+                          )
+                          val currentVal = prefs.getFloat(key, def)
+                          val defIdx = values.indexOf(currentVal).coerceAtLeast(0)
+                          sp.setSelection(defIdx)
+                          sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                              override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                                  val selectedVal = values[pos]
+                                  if (prefs.getFloat(key, def) != selectedVal) {
+                                      prefs.edit().putFloat(key, selectedVal).apply()
+                                      val newCount = robotEditCount + 1
+                                      prefs.edit()
+                                          .putInt("robot_edit_count", newCount)
+                                          .putLong("last_robot_change", System.currentTimeMillis())
+                                          .apply()
+                                  }
+                              }
+                              override fun onNothingSelected(parent: AdapterView<*>?) {}
+                          }
+                          robotCustomContainer.addView(sp)
+                      }
+
+                      choice("Forma de Ojos (Gestos)", "eye_shape", listOf("Redondos", "Suaves", "Cápsulas"), 1)
+                      choice("Color de Ojos", "eye_color", listOf("Cian Tech", "Verde Matrix", "Azul Neón", "Rosa Fucsia", "Naranja Pro", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"), 0)
+                      choiceFloat("Tono de Voz (Robot)", "voice_pitch", listOf("Grave", "Normal", "Agudo / Bot R2D2"), listOf(0.7f, 1.0f, 1.4f), 1.4f)
+                      choiceFloat("Velocidad de Voz", "voice_speed", listOf("Lenta", "Normal", "Rápida"), listOf(0.8f, 1.0f, 1.25f), 1.0f)
                   }
                   rootLayout.addView(robotCustomContainer)
 
@@ -1230,44 +1370,10 @@ jobs:
                       typeface = Typeface.DEFAULT_BOLD
                   }
 
-                  fun saveApiKey() {
-                      val c = current ?: return
-                      val typedKey = Llm.clean(keyBox.text.toString())
-                      if (typedKey.isNotBlank()) {
-                          prefs.edit()
-                              .putString("key_" + c, typedKey)
-                              .putString("model_" + c, modelBox.text.toString().trim())
-                              .putString("provider", c)
-                              .apply()
-                      }
-                  }
-
-                  spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                      override fun onItemSelected(parent: AdapterView<*>, v: View?, pos: Int, id: Long) {
-                          val p = providers[pos]
-                          current = p
-                          keyBox.setText(prefs.getString("key_" + p, ""))
-                          modelBox.setText(prefs.getString("model_" + p, ""))
-                          modelBox.hint = Llm.defaultModel(p)
-                      }
-                      override fun onNothingSelected(parent: AdapterView<*>?) {}
-                  }
-                  val saved = prefs.getString("provider", "groq") ?: "groq"
-                  spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
-
-                  keyBox.addTextChangedListener(object : android.text.TextWatcher {
-                      override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                      override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                          saveApiKey()
-                      }
-                      override fun afterTextChanged(s: android.text.Editable?) {}
-                  })
-
                   test.setOnClickListener {
-                      saveApiKey()
-                      val p = current ?: "groq"
-                      val key = Llm.clean(keyBox.text.toString())
-                      val typed = modelBox.text.toString().trim()
+                      val p = prefs.getString("provider", "groq") ?: "groq"
+                      val key = Llm.clean(prefs.getString("key_" + p, "") ?: "")
+                      val typed = prefs.getString("model_" + p, "") ?: ""
                       result.text = "Conectando con red cibernética..."
                       Thread {
                           val out = try {
@@ -1281,7 +1387,6 @@ jobs:
                                   Llm.chat(p, key, m, "Responde en espanol", q)
                               }
                               prefs.edit().putString("model_" + p, m).remove("lasterror").apply()
-                              runOnUiThread { modelBox.setText(m) }
                               "¡Enlace exitoso con el sistema!"
                           } catch (e: Exception) {
                               "Error: " + e.message
@@ -1291,7 +1396,6 @@ jobs:
                   }
 
                   start.setOnClickListener {
-                      saveApiKey()
                       if (!Settings.canDrawOverlays(this)) {
                           startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                       } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -1319,10 +1423,10 @@ jobs:
           }
           EOF
 
-      - name: Compilar APK Final Custom Limit
+      - name: Compilar APK Masterpiece
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: robot-ia-apk-custom-limit
+          name: robot-ia-apk-masterpiece
           path: app/build/outputs/apk/debug/app-debug.apk
