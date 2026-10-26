@@ -1,0 +1,670 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Generar proyecto Android
+        run: |
+          mkdir -p app/src/main/java/com/robotia/app
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "RobotIA"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.robotia.app"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.robotia.app"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 4
+                  versionName = "0.4"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <queries>
+                  <intent><action android:name="android.speech.RecognitionService"/></intent>
+                  <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
+              </queries>
+              <application
+                  android:label="Robot IA"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".OverlayService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse|microphone">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="overlay"/>
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/Gemini.kt <<'EOF'
+          package com.robotia.app
+
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.net.HttpURLConnection
+          import java.net.URL
+
+          object Gemini {
+              private const val BASE = "https://generativelanguage.googleapis.com/v1beta/"
+
+              class GeminiError(val code: Int, message: String) : Exception(message)
+
+              fun clean(key: String): String =
+                  key.filter { !it.isWhitespace() && it != '"' && it != '\'' }
+
+              private fun http(path: String, key: String, body: JSONObject?): String {
+                  val sep = if (path.contains("?")) "&" else "?"
+                  val c = URL(BASE + path + sep + "key=" + key).openConnection() as HttpURLConnection
+                  c.connectTimeout = 15000
+                  c.readTimeout = 30000
+                  c.setRequestProperty("x-goog-api-key", key)
+                  if (body != null) {
+                      c.requestMethod = "POST"
+                      c.setRequestProperty("content-type", "application/json")
+                      c.doOutput = true
+                      c.outputStream.use { it.write(body.toString().toByteArray()) }
+                  }
+                  val code = c.responseCode
+                  val stream = if (code in 200..299) c.inputStream else c.errorStream
+                  val txt = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                  if (code !in 200..299) {
+                      val msg = try {
+                          JSONObject(txt).getJSONObject("error").getString("message")
+                      } catch (e: Exception) {
+                          txt.take(200)
+                      }
+                      throw GeminiError(code, "HTTP " + code + ": " + msg)
+                  }
+                  return txt
+              }
+
+              fun pickModel(key: String): String {
+                  if (key.isBlank()) throw Exception("falta la clave de API")
+                  val arr = JSONObject(http("models?pageSize=1000", key, null)).optJSONArray("models")
+                      ?: throw Exception("la lista de modelos vino vacia")
+                  val bad = listOf(
+                      "image", "tts", "live", "audio", "embed",
+                      "robotics", "computer", "vision", "veo", "imagen"
+                  )
+                  val names = ArrayList<String>()
+                  for (n in 0 until arr.length()) {
+                      val m = arr.getJSONObject(n)
+                      val name = m.optString("name").removePrefix("models/")
+                      val methods = m.optJSONArray("supportedGenerationMethods")?.toString() ?: ""
+                      if (name.contains("flash") &&
+                          methods.contains("generateContent") &&
+                          bad.none { name.contains(it) }
+                      ) {
+                          names.add(name)
+                      }
+                  }
+                  if (names.isEmpty()) throw Exception("no hay modelos flash disponibles para esta clave")
+                  return names.firstOrNull { it.contains("lite") && !it.contains("preview") }
+                      ?: names.firstOrNull { it.contains("lite") }
+                      ?: names.first()
+              }
+
+              fun generate(key: String, model: String, system: String, msgs: JSONArray): String {
+                  val body = JSONObject()
+                      .put(
+                          "system_instruction",
+                          JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system)))
+                      )
+                      .put("contents", msgs)
+                      .put("generationConfig", JSONObject().put("maxOutputTokens", 1024))
+                  val txt = http("models/" + model + ":generateContent", key, body)
+                  val parts = JSONObject(txt)
+                      .optJSONArray("candidates")
+                      ?.optJSONObject(0)
+                      ?.optJSONObject("content")
+                      ?.optJSONArray("parts")
+                      ?: throw Exception("Google no devolvio respuesta (posible bloqueo de seguridad)")
+                  val sb = StringBuilder()
+                  for (n in 0 until parts.length()) {
+                      sb.append(parts.getJSONObject(n).optString("text"))
+                  }
+                  return sb.toString().ifBlank { "No supe que responder" }
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/MainActivity.kt <<'EOF'
+          package com.robotia.app
+
+          import android.Manifest
+          import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.text.InputType
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import org.json.JSONArray
+          import org.json.JSONObject
+
+          class MainActivity : Activity() {
+              private lateinit var result: TextView
+              private val prefs by lazy { getSharedPreferences("robot", MODE_PRIVATE) }
+
+              override fun onResume() {
+                  super.onResume()
+                  val err = prefs.getString("lasterror", "") ?: ""
+                  if (err.isNotBlank()) result.text = "Ultimo error del robot: " + err
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+                  if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.POST_NOTIFICATIONS")
+                  requestPermissions(perms.toTypedArray(), 1)
+
+                  val pad = (24 * resources.displayMetrics.density).toInt()
+                  val layout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(pad, pad, pad, pad)
+                  }
+                  val info = TextView(this).apply {
+                      text = "1) Pega tu clave de Gemini (Google AI Studio). 2) Toca Probar clave. 3) Despierta los ojos y tocalos para hablar."
+                  }
+                  val keyBox = EditText(this).apply {
+                      hint = "clave de API"
+                      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                      setText(prefs.getString("key", ""))
+                  }
+                  val modelBox = EditText(this).apply {
+                      hint = "modelo (se rellena solo)"
+                      setText(prefs.getString("model", ""))
+                  }
+                  result = TextView(this)
+                  val test = Button(this).apply { text = "Probar clave" }
+                  val start = Button(this).apply { text = "Despertar ojos" }
+                  val stop = Button(this).apply { text = "Dormir ojos" }
+
+                  test.setOnClickListener {
+                      val key = Gemini.clean(keyBox.text.toString())
+                      prefs.edit().putString("key", key).apply()
+                      result.text = "Probando..."
+                      Thread {
+                          val out = try {
+                              val m = Gemini.pickModel(key)
+                              val q = JSONArray().put(
+                                  JSONObject().put("role", "user").put(
+                                      "parts",
+                                      JSONArray().put(JSONObject().put("text", "Di hola en una frase corta"))
+                                  )
+                              )
+                              val r = Gemini.generate(key, m, "Responde en espanol", q)
+                              prefs.edit().putString("model", m).remove("lasterror").apply()
+                              runOnUiThread { modelBox.setText(m) }
+                              "FUNCIONA. Modelo: " + m + ". Respuesta: " + r
+                          } catch (e: Exception) {
+                              "FALLO: " + e.message
+                          }
+                          runOnUiThread { result.text = out }
+                      }.start()
+                  }
+
+                  start.setOnClickListener {
+                      prefs.edit()
+                          .putString("key", Gemini.clean(keyBox.text.toString()))
+                          .putString("model", modelBox.text.toString().trim())
+                          .apply()
+                      if (!Settings.canDrawOverlays(this)) {
+                          startActivity(
+                              Intent(
+                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:$packageName")
+                              )
+                          )
+                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                          != PackageManager.PERMISSION_GRANTED
+                      ) {
+                          requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+                      } else {
+                          startForegroundService(Intent(this, OverlayService::class.java))
+                      }
+                  }
+                  stop.setOnClickListener {
+                      stopService(Intent(this, OverlayService::class.java))
+                  }
+                  layout.addView(info)
+                  layout.addView(keyBox)
+                  layout.addView(modelBox)
+                  layout.addView(test)
+                  layout.addView(result)
+                  layout.addView(start)
+                  layout.addView(stop)
+                  setContentView(ScrollView(this).apply { addView(layout) })
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/OverlayService.kt <<'EOF'
+          package com.robotia.app
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.graphics.PixelFormat
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import android.speech.RecognitionListener
+          import android.speech.RecognizerIntent
+          import android.speech.SpeechRecognizer
+          import android.speech.tts.TextToSpeech
+          import android.speech.tts.UtteranceProgressListener
+          import android.view.Gravity
+          import android.view.MotionEvent
+          import android.view.WindowManager
+          import android.widget.Toast
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.util.Locale
+          import kotlin.math.abs
+
+          class OverlayService : Service() {
+              companion object {
+                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas, porque tus respuestas se leen en voz alta. No uses listas ni simbolos."
+              }
+
+              private lateinit var wm: WindowManager
+              private lateinit var eyes: EyesView
+              private val handler = Handler(Looper.getMainLooper())
+              private var recognizer: SpeechRecognizer? = null
+              private var tts: TextToSpeech? = null
+              private val history = JSONArray()
+              private var turn = 0
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  val channel = "robot"
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.createNotificationChannel(
+                      NotificationChannel(channel, "Robot IA", NotificationManager.IMPORTANCE_LOW)
+                  )
+                  val notif = Notification.Builder(this, channel)
+                      .setContentTitle("Robot IA despierto")
+                      .setSmallIcon(android.R.drawable.ic_dialog_info)
+                      .build()
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      startForeground(
+                          1, notif,
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                              ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                      )
+                  } else {
+                      startForeground(1, notif)
+                  }
+
+                  tts = TextToSpeech(this) { status ->
+                      if (status == TextToSpeech.SUCCESS) {
+                          tts?.language = Locale.getDefault()
+                          tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                              override fun onStart(id: String?) {}
+                              override fun onDone(id: String?) {
+                                  handler.post { eyes.state = EyesView.IDLE }
+                              }
+                              @Deprecated("Deprecated in Java")
+                              override fun onError(id: String?) {
+                                  handler.post { eyes.state = EyesView.IDLE }
+                              }
+                          })
+                      }
+                  }
+
+                  wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                  val params = WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                          WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                      PixelFormat.TRANSLUCENT
+                  )
+                  params.gravity = Gravity.TOP or Gravity.START
+                  params.x = 300
+                  params.y = 60
+
+                  eyes = EyesView(this)
+                  var startX = 0
+                  var startY = 0
+                  var touchX = 0f
+                  var touchY = 0f
+                  var moved = false
+                  eyes.setOnTouchListener { _, e ->
+                      when (e.action) {
+                          MotionEvent.ACTION_DOWN -> {
+                              startX = params.x
+                              startY = params.y
+                              touchX = e.rawX
+                              touchY = e.rawY
+                              moved = false
+                          }
+                          MotionEvent.ACTION_MOVE -> {
+                              val dx = (e.rawX - touchX).toInt()
+                              val dy = (e.rawY - touchY).toInt()
+                              if (abs(dx) > 15 || abs(dy) > 15) moved = true
+                              params.x = startX + dx
+                              params.y = startY + dy
+                              wm.updateViewLayout(eyes, params)
+                          }
+                          MotionEvent.ACTION_UP -> {
+                              if (!moved) onTap()
+                          }
+                      }
+                      true
+                  }
+                  wm.addView(eyes, params)
+              }
+
+              private fun onTap() {
+                  if (eyes.state == EyesView.IDLE) listen() else stopAll()
+              }
+
+              private fun stopAll() {
+                  turn++
+                  recognizer?.destroy()
+                  recognizer = null
+                  tts?.stop()
+                  eyes.state = EyesView.IDLE
+              }
+
+              private fun listen() {
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      speak("No tengo reconocimiento de voz en este celular")
+                      return
+                  }
+                  recognizer?.destroy()
+                  val r = SpeechRecognizer.createSpeechRecognizer(this)
+                  recognizer = r
+                  r.setRecognitionListener(object : RecognitionListener {
+                      override fun onReadyForSpeech(p: Bundle?) {}
+                      override fun onBeginningOfSpeech() {}
+                      override fun onRmsChanged(v: Float) {}
+                      override fun onBufferReceived(b: ByteArray?) {}
+                      override fun onEndOfSpeech() {}
+                      override fun onError(error: Int) {
+                          eyes.state = EyesView.IDLE
+                      }
+                      override fun onResults(res: Bundle?) {
+                          val text = res
+                              ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                              ?.firstOrNull()
+                          if (text.isNullOrBlank()) {
+                              eyes.state = EyesView.IDLE
+                          } else {
+                              ask(text)
+                          }
+                      }
+                      override fun onPartialResults(p: Bundle?) {}
+                      override fun onEvent(type: Int, p: Bundle?) {}
+                  })
+                  val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                  i.putExtra(
+                      RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                      RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                  )
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                  eyes.state = EyesView.LISTENING
+                  r.startListening(i)
+              }
+
+              private fun msg(role: String, text: String): JSONObject =
+                  JSONObject().put("role", role).put(
+                      "parts",
+                      JSONArray().put(JSONObject().put("text", text))
+                  )
+
+              private fun callGemini(key: String, msgs: JSONArray): String {
+                  if (key.isBlank()) throw Exception("falta la clave de API en la app")
+                  val prefs = getSharedPreferences("robot", MODE_PRIVATE)
+                  var model = prefs.getString("model", "") ?: ""
+                  if (model.isBlank()) {
+                      model = Gemini.pickModel(key)
+                      prefs.edit().putString("model", model).apply()
+                  }
+                  return try {
+                      Gemini.generate(key, model, SYSTEM, msgs)
+                  } catch (e: Gemini.GeminiError) {
+                      if (e.code != 404) throw e
+                      val m = Gemini.pickModel(key)
+                      prefs.edit().putString("model", m).apply()
+                      Gemini.generate(key, m, SYSTEM, msgs)
+                  }
+              }
+
+              private fun ask(text: String) {
+                  eyes.state = EyesView.THINKING
+                  history.put(msg("user", text))
+                  val prefs = getSharedPreferences("robot", MODE_PRIVATE)
+                  val key = Gemini.clean(prefs.getString("key", "") ?: "")
+                  val msgs = JSONArray(history.toString())
+                  val mine = ++turn
+                  Thread {
+                      var err: String? = null
+                      val reply = try {
+                          callGemini(key, msgs)
+                      } catch (e: Exception) {
+                          err = e.message ?: "error desconocido"
+                          "Tuve un problema. Mira el mensaje en pantalla."
+                      }
+                      handler.post {
+                          if (mine == turn) {
+                              val f = err
+                              if (f == null) {
+                                  history.put(msg("model", reply))
+                                  prefs.edit().remove("lasterror").apply()
+                              } else {
+                                  history.remove(history.length() - 1)
+                                  prefs.edit().putString("lasterror", f).apply()
+                                  Toast.makeText(this, f, Toast.LENGTH_LONG).show()
+                              }
+                              while (history.length() > 20) {
+                                  history.remove(0)
+                                  history.remove(0)
+                              }
+                              speak(reply)
+                          }
+                      }
+                  }.start()
+              }
+
+              private fun speak(text: String) {
+                  eyes.state = EyesView.SPEAKING
+                  tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "robot")
+              }
+
+              override fun onDestroy() {
+                  turn++
+                  recognizer?.destroy()
+                  tts?.shutdown()
+                  if (::eyes.isInitialized) {
+                      eyes.stopBlinking()
+                      wm.removeView(eyes)
+                  }
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/EyesView.kt <<'EOF'
+          package com.robotia.app
+
+          import android.animation.ValueAnimator
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.View
+
+          class EyesView(ctx: Context) : View(ctx) {
+              companion object {
+                  const val IDLE = 0
+                  const val LISTENING = 1
+                  const val THINKING = 2
+                  const val SPEAKING = 3
+              }
+
+              private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+              private val pupil = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(20, 20, 40) }
+              private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(230, 15, 15, 30) }
+              private val density = ctx.resources.displayMetrics.density
+              private var open = 1f
+              private var look = 0f
+              private val handler = Handler(Looper.getMainLooper())
+
+              var state = IDLE
+                  set(v) {
+                      field = v
+                      pupil.color = when (v) {
+                          LISTENING -> Color.rgb(30, 120, 255)
+                          THINKING -> Color.rgb(255, 170, 0)
+                          SPEAKING -> Color.rgb(0, 170, 90)
+                          else -> Color.rgb(20, 20, 40)
+                      }
+                      invalidate()
+                  }
+
+              private val loop = object : Runnable {
+                  override fun run() {
+                      val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
+                      a.duration = 220
+                      a.addUpdateListener {
+                          open = it.animatedValue as Float
+                          invalidate()
+                      }
+                      a.start()
+                      look = (-1..1).random().toFloat()
+                      handler.postDelayed(this, (2500..5500).random().toLong())
+                  }
+              }
+
+              init {
+                  handler.post(loop)
+              }
+
+              fun stopBlinking() {
+                  handler.removeCallbacks(loop)
+              }
+
+              override fun onMeasure(w: Int, h: Int) {
+                  setMeasuredDimension((150 * density).toInt(), (70 * density).toInt())
+              }
+
+              override fun onDraw(c: Canvas) {
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  c.drawRoundRect(0f, 0f, w, h, h / 2, h / 2, bg)
+                  val r = h * 0.32f
+                  val pr = if (state == LISTENING) r * 0.65f else r * 0.5f
+                  val cy = h / 2
+                  for (cx in floatArrayOf(w * 0.3f, w * 0.7f)) {
+                      c.save()
+                      c.scale(1f, open, cx, cy)
+                      c.drawCircle(cx, cy, r, white)
+                      c.drawCircle(cx + look * r * 0.35f, cy, pr, pupil)
+                      c.restore()
+                  }
+              }
+          }
+          EOF
+
+      - name: Compilar APK
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: robot-ia-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
