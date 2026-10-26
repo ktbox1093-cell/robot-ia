@@ -657,7 +657,6 @@ jobs:
                                       try {
                                           img = r.acquireLatestImage()
                                           val now = System.currentTimeMillis()
-                                          // Optimización de batería: análisis de rostros cada 700ms para menor consumo
                                           if (img != null && now - lastFace >= 700) {
                                               lastFace = now
                                               processImage(img, rot, step)
@@ -812,7 +811,6 @@ jobs:
                   var model = prefs.getString("model_" + p, "") ?: ""
                   if (model.isBlank()) model = Llm.defaultModel(p)
 
-                  // Memoria limitada estrictamente a los últimos 7 días
                   val rawMem = prefs.getString("robot_memory_json", "[]") ?: "[]"
                   val memArray = JSONArray(rawMem)
                   val filteredArray = JSONArray()
@@ -1035,6 +1033,8 @@ jobs:
           import android.speech.tts.TextToSpeech
           import android.text.InputType
           import android.view.Gravity
+          import android.view.View
+          import android.widget.AdapterView
           import android.widget.ArrayAdapter
           import android.widget.Button
           import android.widget.CheckBox
@@ -1103,14 +1103,12 @@ jobs:
                   }
                   val modelBox = EditText(this).apply { hint = "Modelo (automático)" }
 
-                  // Control estricto de modificación: Permitir cambios solo 1 vez a la semana (7 días)
                   val lastChangeTime = prefs.getLong("last_config_change", 0L)
                   val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000
                   val now = System.currentTimeMillis()
                   val canModify = (now - lastChangeTime) > sevenDaysMillis
 
                   if (!canModify) {
-                      val daysLeft = ((sevenDaysMillis - (now - lastChangeTime)) / (1000 * 60 * 60 * 24)).toInt()
                       keyBox.isEnabled = false
                       spinner.isEnabled = false
                       modelBox.isEnabled = false
@@ -1126,13 +1124,11 @@ jobs:
 
                   result = TextView(this).apply { setPadding(0, 10, 0, 10) }
                   val test = Button(this).apply { text = "Probar Clave API" }
-                  
-                  // Únicos 2 botones principales solicitados: Apagar/Encender Robot y Cámara de seguimiento
                   val start = Button(this).apply { text = "🟢 Encender Robot IA" }
                   val stop = Button(this).apply { text = "🔴 Apagar Robot IA" }
 
                   fun saveCurrent() {
-                      if (!canModify) return // Bloqueado por regla de 7 días
+                      if (!canModify) return
                       prefs.edit().putBoolean("track", track.isChecked).apply()
                       val c = current ?: return
                       prefs.edit()
@@ -1143,15 +1139,15 @@ jobs:
                           .apply()
                   }
 
-                  spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-                      override fun onItemSelected(parent: android.widget.AdapterView<*>, v: View?, pos: Int, id: Long) {
+                  spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: AdapterView<*>, v: View?, pos: Int, id: Long) {
                           val p = providers[pos]
                           current = p
                           keyBox.setText(prefs.getString("key_" + p, ""))
                           modelBox.setText(prefs.getString("model_" + p, ""))
                           modelBox.hint = Llm.defaultModel(p)
                       }
-                      override fun onNothingSelected(parent: android.widget.AdapterView<*>) {}
+                      override fun onNothingSelected(parent: AdapterView<*>) {}
                   }
                   val saved = prefs.getString("provider", "groq") ?: "groq"
                   spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
