@@ -74,8 +74,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 2
-                  versionName = "0.2"
+                  versionCode = 3
+                  versionName = "0.3"
               }
 
               compileOptions {
@@ -98,6 +98,13 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+              <!-- Necesario para que Android permita acceder al servicio de reconocimiento de voz -->
+              <queries>
+                  <intent>
+                      <action android:name="android.speech.RecognitionService" />
+                  </intent>
+              </queries>
+
               <application
                   android:label="Robot IA"
                   android:theme="@android:style/Theme.Material.Light.NoActionBar">
@@ -112,4 +119,417 @@ jobs:
                       android:exported="false"
                       android:foregroundServiceType="specialUse">
                       <property
-                          android:name="androi
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="overlay"/>
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/MainActivity.kt <<'EOF'
+          package com.robotia.app
+
+          import android.app.Activity
+          import android.content.Context
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      requestPermissions(arrayOf(
+                          android.Manifest.permission.POST_NOTIFICATIONS,
+                          android.Manifest.permission.RECORD_AUDIO
+                      ), 1)
+                  } else {
+                      requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
+                  }
+
+                  val prefs = getSharedPreferences("robot_prefs", Context.MODE_PRIVATE)
+
+                  val layout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(50, 50, 50, 50)
+                  }
+
+                  val title = TextView(this).apply {
+                      text = "Configuración Robot IA"
+                      textSize = 20f
+                      gravity = Gravity.CENTER
+                  }
+
+                  val inputKey = EditText(this).apply {
+                      hint = "Pega aquí tu Gemini API Key (AIzaSy...)"
+                      setText(prefs.getString("gemini_key", ""))
+                  }
+
+                  val saveBtn = Button(this).apply {
+                      text = "Guardar Clave"
+                      setOnClickListener {
+                          val key = inputKey.text.toString().trim()
+                          if (key.isNotEmpty()) {
+                              prefs.edit().putString("gemini_key", key).apply()
+                              Toast.makeText(this@MainActivity, "Clave guardada", Toast.LENGTH_SHORT).show()
+                          } else {
+                              Toast.makeText(this@MainActivity, "Ingresa una clave válida", Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                  }
+
+                  val start = Button(this).apply { 
+                      text = "Despertar ojos" 
+                      setOnClickListener {
+                          if (!Settings.canDrawOverlays(this@MainActivity)) {
+                              startActivity(
+                                  Intent(
+                                      Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                      Uri.parse("package:$packageName")
+                                  )
+                              )
+                          } else {
+                              startForegroundService(Intent(this@MainActivity, OverlayService::class.java))
+                          }
+                      }
+                  }
+
+                  val stop = Button(this).apply { 
+                      text = "Dormir ojos" 
+                      setOnClickListener {
+                          stopService(Intent(this@MainActivity, OverlayService::class.java))
+                      }
+                  }
+
+                  layout.addView(title)
+                  layout.addView(inputKey)
+                  layout.addView(saveBtn)
+                  layout.addView(start)
+                  layout.addView(stop)
+                  setContentView(layout)
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/OverlayService.kt <<'EOF'
+          package com.robotia.app
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.PixelFormat
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import android.speech.RecognitionListener
+          import android.speech.RecognizerIntent
+          import android.speech.SpeechRecognizer
+          import android.speech.tts.TextToSpeech
+          import android.view.Gravity
+          import android.view.MotionEvent
+          import android.view.WindowManager
+          import android.widget.Toast
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.OutputStreamWriter
+          import java.net.HttpURLConnection
+          import java.net.URL
+          import java.util.Locale
+          import kotlin.concurrent.thread
+
+          class OverlayService : Service(), TextToSpeech.OnInitListener {
+              private lateinit var wm: WindowManager
+              private var eyes: EyesView? = null
+              private var tts: TextToSpeech? = null
+              private var recognizer: SpeechRecognizer? = null
+              private val handler = Handler(Looper.getMainLooper())
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  val channel = "robot"
+                  val nm = getSystemService(NotificationManager::class.java)
+                  nm.createNotificationChannel(
+                      NotificationChannel(channel, "Robot IA", NotificationManager.IMPORTANCE_LOW)
+                  )
+                  val notif = Notification.Builder(this, channel)
+                      .setContentTitle("Robot IA despierto")
+                      .setSmallIcon(android.R.drawable.ic_dialog_info)
+                      .build()
+                  startForeground(1, notif)
+
+                  tts = TextToSpeech(this, this)
+
+                  wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                  val params = WindowManager.LayoutParams(
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                          WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                      PixelFormat.TRANSLUCENT
+                  )
+                  params.gravity = Gravity.TOP or Gravity.START
+                  params.x = 300
+                  params.y = 120
+
+                  val view = EyesView(this)
+                  var startX = 0
+                  var startY = 0
+                  var touchX = 0f
+                  var touchY = 0f
+                  var isDragging = false
+
+                  view.setOnTouchListener { _, e ->
+                      when (e.action) {
+                          MotionEvent.ACTION_DOWN -> {
+                              startX = params.x
+                              startY = params.y
+                              touchX = e.rawX
+                              touchY = e.rawY
+                              isDragging = false
+                          }
+                          MotionEvent.ACTION_MOVE -> {
+                              val dx = Math.abs(e.rawX - touchX)
+                              val dy = Math.abs(e.rawY - touchY)
+                              if (dx > 15 || dy > 15) {
+                                  isDragging = true
+                                  params.x = startX + (e.rawX - touchX).toInt()
+                                  params.y = startY + (e.rawY - touchY).toInt()
+                                  wm.updateViewLayout(view, params)
+                              }
+                          }
+                          MotionEvent.ACTION_UP -> {
+                              if (!isDragging) {
+                                  iniciarEscucha()
+                              }
+                          }
+                      }
+                      true
+                  }
+                  eyes = view
+                  wm.addView(view, params)
+              }
+
+              override fun onInit(status: Int) {
+                  if (status == TextToSpeech.SUCCESS) {
+                      tts?.language = Locale("es", "ES")
+                  }
+              }
+
+              private fun iniciarEscucha() {
+                  val prefs = getSharedPreferences("robot_prefs", Context.MODE_PRIVATE)
+                  val apiKey = prefs.getString("gemini_key", "") ?: ""
+                  if (apiKey.isEmpty()) {
+                      Toast.makeText(this, "Abre la app y guarda tu API Key primero", Toast.LENGTH_LONG).show()
+                      return
+                  }
+
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      Toast.makeText(this, "Tu teléfono no tiene motor de reconocimiento de voz instalado", Toast.LENGTH_LONG).show()
+                      return
+                  }
+
+                  handler.post {
+                      try {
+                          eyes?.setEyeColor(Color.GREEN) // Verde: escuchando
+                          recognizer?.destroy()
+                          recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+                          val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                              putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                              putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
+                          }
+
+                          recognizer?.setRecognitionListener(object : RecognitionListener {
+                              override fun onReadyForSpeech(params: Bundle?) {}
+                              override fun onBeginningOfSpeech() {}
+                              override fun onRmsChanged(rmsdB: Float) {}
+                              override fun onBufferReceived(buffer: ByteArray?) {}
+                              override fun onEndOfSpeech() {
+                                  eyes?.setEyeColor(Color.CYAN) // Celeste: procesando
+                              }
+                              override fun onError(error: Int) {
+                                  eyes?.setEyeColor(Color.WHITE)
+                                  Toast.makeText(this@OverlayService, "Error de voz código: $error", Toast.LENGTH_SHORT).show()
+                              }
+                              override fun onResults(results: Bundle?) {
+                                  val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                  if (!matches.isNullOrEmpty()) {
+                                      val query = matches[0]
+                                      consultarGemini(query, apiKey)
+                                  } else {
+                                      eyes?.setEyeColor(Color.WHITE)
+                                  }
+                              }
+                              override fun onPartialResults(partialResults: Bundle?) {}
+                              override fun onEvent(eventType: Int, params: Bundle?) {}
+                          })
+                          recognizer?.startListening(intent)
+                      } catch (e: Exception) {
+                          eyes?.setEyeColor(Color.WHITE)
+                          Toast.makeText(this@OverlayService, "Error iniciando voz: ${e.message}", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+              }
+
+              private fun consultarGemini(prompt: String, apiKey: String) {
+                  thread {
+                      try {
+                          // Usamos gemini-1.5-flash que es compatible con todas las cuentas y regiones
+                          val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+                          val url = URL(endpoint)
+                          val conn = url.openConnection() as HttpURLConnection
+                          conn.requestMethod = "POST"
+                          conn.setRequestProperty("Content-Type", "application/json")
+                          conn.doOutput = true
+
+                          val jsonBody = JSONObject().apply {
+                              put("contents", JSONArray().put(
+                                  JSONObject().put("parts", JSONArray().put(
+                                      JSONObject().put("text", "Eres un asistente amable. Responde muy breve en una frase en español: $prompt")
+                                  ))
+                              ))
+                          }
+
+                          OutputStreamWriter(conn.outputStream).use { it.write(jsonBody.toString()) }
+
+                          val responseCode = conn.responseCode
+                          if (responseCode == 200) {
+                              val responseText = conn.inputStream.bufferedReader().use { it.readText() }
+                              val json = JSONObject(responseText)
+                              val reply = json.getJSONArray("candidates")
+                                  .getJSONObject(0)
+                                  .getJSONObject("content")
+                                  .getJSONArray("parts")
+                                  .getJSONObject(0)
+                                  .getString("text")
+
+                              handler.post {
+                                  eyes?.setEyeColor(Color.YELLOW) // Amarillo: hablando
+                                  tts?.speak(reply, TextToSpeech.QUEUE_FLUSH, null, "robot_speech")
+                                  handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 4000)
+                              }
+                          } else {
+                              val errorMsg = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                              handler.post {
+                                  eyes?.setEyeColor(Color.RED)
+                                  Toast.makeText(this@OverlayService, "Error API ($responseCode): $errorMsg", Toast.LENGTH_LONG).show()
+                                  handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 3000)
+                              }
+                          }
+                      } catch (e: Exception) {
+                          handler.post {
+                              eyes?.setEyeColor(Color.RED)
+                              Toast.makeText(this@OverlayService, "Fallo de conexión: ${e.message}", Toast.LENGTH_LONG).show()
+                              handler.postDelayed({ eyes?.setEyeColor(Color.WHITE) }, 3000)
+                          }
+                      }
+                  }
+              }
+
+              override fun onDestroy() {
+                  eyes?.let {
+                      it.stopBlinking()
+                      wm.removeView(it)
+                  }
+                  tts?.stop()
+                  tts?.shutdown()
+                  recognizer?.destroy()
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/robotia/app/EyesView.kt <<'EOF'
+          package com.robotia.app
+
+          import android.animation.ValueAnimator
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.View
+
+          class EyesView(ctx: Context) : View(ctx) {
+              private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+              private val pupil = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(20, 20, 40) }
+              private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(230, 15, 15, 30) }
+              private val density = ctx.resources.displayMetrics.density
+              private var open = 1f
+              private var look = 0f
+              private val handler = Handler(Looper.getMainLooper())
+
+              private val loop = object : Runnable {
+                  override fun run() {
+                      val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
+                      a.duration = 220
+                      a.addUpdateListener {
+                          open = it.animatedValue as Float
+                          invalidate()
+                      }
+                      a.start()
+                      look = (-1..1).random().toFloat()
+                      handler.postDelayed(this, (2500..5500).random().toLong())
+                  }
+              }
+
+              init {
+                  handler.post(loop)
+              }
+
+              fun setEyeColor(color: Int) {
+                  white.color = color
+                  invalidate()
+              }
+
+              fun stopBlinking() {
+                  handler.removeCallbacks(loop)
+              }
+
+              override fun onMeasure(w: Int, h: Int) {
+                  setMeasuredDimension((150 * density).toInt(), (70 * density).toInt())
+              }
+
+              override fun onDraw(c: Canvas) {
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  c.drawRoundRect(0f, 0f, w, h, h / 2, h / 2, bg)
+                  val r = h * 0.32f
+                  val cy = h / 2
+                  for (cx in floatArrayOf(w * 0.3f, w * 0.7f)) {
+                      c.save()
+                      c.scale(1f, open, cx, cy)
+                      c.drawCircle(cx, cy, r, white)
+                      c.drawCircle(cx + look * r * 0.35f, cy, r * 0.5f, pupil)
+                      c.restore()
+                  }
+              }
+          }
+          EOF
+
+      - name: Compilar APK Debug
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-ia-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
