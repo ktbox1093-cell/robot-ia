@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK Fase 5
 
 on:
   workflow_dispatch:
@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 7
-                  versionName = "0.7"
+                  versionCode = 8
+                  versionName = "0.8"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -87,6 +87,9 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.CALL_PHONE"/>
+              <uses-permission android:name="android.permission.READ_CONTACTS"/>
+              <uses-permission android:name="android.permission.SEND_SMS"/>
               <uses-feature android:name="android.hardware.camera" android:required="false"/>
               <queries>
                   <intent><action android:name="android.speech.RecognitionService"/></intent>
@@ -139,7 +142,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/0.7")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/0.8")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -424,6 +427,7 @@ jobs:
           import android.media.FaceDetector
           import android.media.Image
           import android.media.ImageReader
+          import android.net.Uri
           import android.os.Build
           import android.os.Bundle
           import android.os.Handler
@@ -448,7 +452,7 @@ jobs:
 
           class OverlayService : Service() {
               companion object {
-                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas, porque tus respuestas se leen en voz alta. No uses listas ni simbolos. Empieza SIEMPRE tu respuesta con una etiqueta entre corchetes que indique tu emocion: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] o [guino]. Despues de la etiqueta escribe la respuesta."
+                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas. No uses listas ni simbolos. Empieza SIEMPRE tu respuesta con una etiqueta de emocion: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] or [guino]. Si el usuario te pide explícitamente realizar una accion del sistema (llamar a alguien, abrir una aplicacion, poner una alarma o enviar un mensaje), incluye al final de tu respuesta una etiqueta de accion en formato exacto: [ACCION:ABRIR:nombre_app], [ACCION:ALARMA:hora:minuto], [ACCION:LLAMAR:contacto] o [ACCION:MENSAJE:contacto:texto]."
               }
 
               private lateinit var wm: WindowManager
@@ -460,6 +464,7 @@ jobs:
               private var ttsReady = false
               private val history = JSONArray()
               private var turn = 0
+              private var pendingAction: String? = null
 
               private var camera: CameraDevice? = null
               private var session: CameraCaptureSession? = null
@@ -796,6 +801,7 @@ jobs:
                   recognizer = null
                   tts?.stop()
                   eyes.state = EyesView.IDLE
+                  pendingAction = null
               }
 
               private fun listen() {
@@ -868,7 +874,86 @@ jobs:
                   return Pair(if (idx >= 0) EyesView.EXPR_NAMES[idx] else "", text)
               }
 
+              private fun parseAction(reply: String): Pair<String?, String> {
+                  val actionRegex = Regex("\\[ACCION:([^\\]]+)\\]")
+                  val match = actionRegex.find(reply)
+                  val action = match?.groupValues?.get(1)
+                  val cleanReply = reply.replace(actionRegex, "").trim()
+                  return Pair(action, cleanReply)
+              }
+
+              private fun executeAction(action: String) {
+                  try {
+                      val parts = action.split(":")
+                      when (parts[0].uppercase()) {
+                          "ABRIR" -> {
+                              val appName = parts[1].lowercase()
+                              val pm = packageManager
+                              val packages = pm.getInstalledApplications(0)
+                              val target = packages.firstOrNull { 
+                                  pm.getApplicationLabel(it).toString().lowercase().contains(appName) 
+                              }
+                              if (target != null) {
+                                  val intent = pm.getLaunchIntentForPackage(target.packageName)
+                                  intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                  startActivity(intent)
+                                  speak("Listo, abriendo aplicación", "feliz")
+                              } else {
+                                  speak("No encontré la aplicación", "triste")
+                              }
+                          }
+                          "ALARMA" -> {
+                              val hour = parts[1].toInt()
+                              val minute = parts[2].toInt()
+                              val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                                  putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+                                  putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+                                  putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, "Alarma de Robot IA")
+                                  putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                              }
+                              startActivity(intent)
+                              speak("Alarma programada", "feliz")
+                          }
+                          "LLAMAR" -> {
+                              val contact = parts[1]
+                              val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$contact")).apply {
+                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                              }
+                              startActivity(intent)
+                              speak("Abriendo marcador para $contact", "neutral")
+                          }
+                          "MENSAJE" -> {
+                              val contact = parts[1]
+                              val message = parts.getOrNull(2) ?: "Hola"
+                              val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$contact")).apply {
+                                  putExtra("sms_body", message)
+                                  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                              }
+                              startActivity(intent)
+                              speak("Preparando mensaje para $contact", "neutral")
+                          }
+                      }
+                  } catch (e: Exception) {
+                      speak("No pude completar la acción", "triste")
+                  }
+              }
+
               private fun ask(text: String) {
+                  if (pendingAction != null) {
+                      val lower = text.lowercase()
+                      val confirmed = lower.contains("sí") || lower.contains("si") || lower.contains("claro") || lower.contains("dale") || lower.contains("ok")
+                      val act = pendingAction
+                      pendingAction = null
+                      
+                      if (confirmed && act != null) {
+                          executeAction(act)
+                      } else {
+                          speak("Acción cancelada", "neutral")
+                      }
+                      return
+                  }
+
                   eyes.state = EyesView.THINKING
                   history.put(msg("user", text))
                   val prefs = getSharedPreferences("robot", MODE_PRIVATE)
@@ -898,8 +983,15 @@ jobs:
                                   history.remove(0)
                               }
                               if (f == null) {
-                                  val parsed = parseEmotion(reply)
-                                  speak(parsed.second, parsed.first)
+                                  val parsedEmotion = parseEmotion(reply)
+                                  val parsedAction = parseAction(parsedEmotion.second)
+                                  
+                                  if (parsedAction.first != null) {
+                                      pendingAction = parsedAction.first
+                                      speak("¿Confirmas que quieres que haga eso? Dime sí o no.", "sorprendido")
+                                  } else {
+                                      speak(parsedAction.second, parsedEmotion.first)
+                                  }
                               } else {
                                   speak(reply, "triste")
                               }
@@ -985,7 +1077,9 @@ jobs:
                   super.onCreate(savedInstanceState)
                   val perms = mutableListOf(
                       Manifest.permission.RECORD_AUDIO,
-                      Manifest.permission.CAMERA
+                      Manifest.permission.CAMERA,
+                      Manifest.permission.CALL_PHONE,
+                      Manifest.permission.SEND_SMS
                   )
                   if (Build.VERSION.SDK_INT >= 33) perms.add("android.permission.POST_NOTIFICATIONS")
                   requestPermissions(perms.toTypedArray(), 1)
