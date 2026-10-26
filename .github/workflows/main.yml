@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Generar proyecto Android con Isla Dinámica y Sonidos Cozmo/R2D2
+      - name: Generar proyecto Android depurado
         run: |
           mkdir -p app/src/main/java/com/robotia/app
           mkdir -p app/src/main/res/mipmap-anydpi-v26
@@ -68,8 +68,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 30
-                  versionName = "3.0"
+                  versionCode = 32
+                  versionName = "3.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -158,7 +158,6 @@ jobs:
           import java.net.URL
 
           object Llm {
-              // Tu nube privada en Render optimizada y segura
               private const val CLOUD_PROXY_URL = "https://robot-ia-cloud.onrender.com/api/chat"
 
               class LlmError(val code: Int, message: String) : Exception(message)
@@ -222,21 +221,21 @@ jobs:
                   const val LISTENING = 1
                   const val THINKING = 2
                   const val SPEAKING = 3
-                  const val TYPING = 4 // Nuevo estado para mirar hacia abajo al escribir
+                  const val TYPING = 4
 
                   val EXPR_NAMES = listOf(
                       "neutral", "feliz", "triste", "enojado",
                       "sorprendido", "amor", "sueno", "guino"
                   )
                   val COLORS = intArrayOf(
-                      Color.rgb(0, 242, 254),  // Cian Neón Apple
-                      Color.rgb(52, 199, 89),  // Verde Dinámico
-                      Color.rgb(0, 122, 255),  // Azul Pro
-                      Color.rgb(255, 45, 85),  // Rosa Fucsia
-                      Color.rgb(255, 149, 0),  // Naranja Cozmo
-                      Color.rgb(255, 255, 255),// Blanco Puro
-                      Color.rgb(255, 59, 48),  // Rojo Alerta
-                      Color.rgb(255, 204, 0)   // Amarillo Astro Bot
+                      Color.rgb(0, 242, 254),
+                      Color.rgb(52, 199, 89),
+                      Color.rgb(0, 122, 255),
+                      Color.rgb(255, 45, 85),
+                      Color.rgb(255, 149, 0),
+                      Color.rgb(255, 255, 255),
+                      Color.rgb(255, 59, 48),
+                      Color.rgb(255, 204, 0)
                   )
               }
 
@@ -272,14 +271,9 @@ jobs:
                   animateGaze(x, y)
               }
 
-              fun lookDown() {
-                  tracking = true
-                  animateGaze(0f, 1.0f) // Mira hacia abajo (teclado / escritura)
-              }
-
               fun idleLook() {
                   tracking = false
-                  animateGaze((-0.5f..0.5f).random(), 0f)
+                  animateGaze((-6..6).random() / 10f, 0f)
               }
 
               private fun animateGaze(targetX: Float, targetY: Float) {
@@ -310,7 +304,7 @@ jobs:
                               }
                           }
                           a.start()
-                          lx = (-0.6f..0.6f).random()
+                          lx = (-6..6).random() / 10f
                           ly = 0f
                       }
                       handler.postDelayed(this, (3000..6000).random().toLong())
@@ -337,13 +331,11 @@ jobs:
                   val h = height.toFloat()
                   val eh = h * 0.82f
                   val ew = when (shape) {
-                      0 -> eh * 0.92f // Redondo estilo isla dinámica compacta
-                      2 -> eh * 0.52f // Cápsula alargada
-                      else -> eh * 0.78f // Suave fluida
+                      0 -> eh * 0.92f
+                      2 -> eh * 0.52f
+                      else -> eh * 0.78f
                   }
                   val cy = h / 2
-                  
-                  // Desplazamiento inteligente de la mirada (Isla Dinámica fluida)
                   val dx = if (state == THINKING) 0.7f else if (state == TYPING) 0f else lx
                   val dy = if (state == THINKING) -0.7f else if (state == TYPING) 0.85f else ly
 
@@ -363,7 +355,7 @@ jobs:
                       return
                   }
                   var hh = eh * open
-                  if (ex == 7 && i == 1) hh = eh * 0.18f // Guiño
+                  if (ex == 7 && i == 1) hh = eh * 0.18f
                   if (hh < 6f) hh = 6f
 
                   val rect = RectF(cx - ew / 2f, cy - hh / 2f, cx + ew / 2f, cy + hh / 2f)
@@ -457,7 +449,6 @@ jobs:
               private var lastFace = 0L
               private var lastSeen = 0L
 
-              // Sonidos automáticos estilo Star Wars R2D2, Astro Bot y Cozmo
               private val robotSounds = listOf(
                   "bip bop zzt wup", "weee-boop bzzzt", "chirp zzt bloop", 
                   "whirrr bip beep", "piip bloop zzt-zzt", "zrt-boop wub"
@@ -827,7 +818,6 @@ jobs:
               }
 
               private fun ask(text: String) {
-                  // Simula mirar hacia abajo como si observara el texto o teclado al procesar
                   eyes.state = EyesView.TYPING
                   handler.postDelayed({ eyes.state = EyesView.THINKING }, 400)
                   history.put(msg("user", text))
@@ -938,7 +928,6 @@ jobs:
                   }
                   rootLayout.addView(subtitle)
 
-                  // --- BOTÓN MENÚ DE PERSONALIZACIÓN ---
                   val btnToggleCustom = Button(this).apply {
                       text = "⚙️ Personalización"
                       setBackgroundColor(Color.parseColor("#161F30"))
@@ -955,7 +944,7 @@ jobs:
                       setBackgroundColor(Color.parseColor("#0F172A"))
                   }
 
-                  fun addSpinner(label: String, key: String, options: List<String>, values: List<Any>, defIndex: Int) {
+                  fun addSpinnerInt(label: String, key: String, options: List<String>, defIndex: Int) {
                       customContainer.addView(TextView(this).apply {
                           text = label
                           setTextColor(Color.parseColor("#8E9AAF"))
@@ -965,32 +954,42 @@ jobs:
                       val sp = Spinner(this).apply {
                           adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, options)
                       }
-                      if (values.first() is Int) {
-                          sp.setSelection(prefs.getInt(key, defIndex).coerceIn(0, options.size - 1))
-                          sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                              override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                                  prefs.edit().putInt(key, pos).apply()
-                              }
-                              override fun onNothingSelected(parent: AdapterView<*>?) {}
+                      sp.setSelection(prefs.getInt(key, defIndex).coerceIn(0, options.size - 1))
+                      sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                          override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                              prefs.edit().putInt(key, pos).apply()
                           }
-                      } else if (values.first() is Float) {
-                          val current = prefs.getFloat(key, values[defIndex] as Float)
-                          sp.setSelection(values.indexOf(current).coerceAtLeast(0))
-                          sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                              override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                                  prefs.edit().putFloat(key, values[pos] as Float).apply()
-                              }
-                              override fun onNothingSelected(parent: AdapterView<*>?) {}
-                          }
+                          override fun onNothingSelected(parent: AdapterView<*>?) {}
                       }
                       customContainer.addView(sp)
                   }
 
-                  addSpinner("Forma de Ojos (Isla Dinámica)", "eye_shape", listOf("Redondos", "Suaves", "Cápsulas"), listOf(0, 1, 2), 1)
-                  addSpinner("Color Neón", "eye_color", listOf("Cian Apple", "Verde Matrix", "Azul Pro", "Rosa Fucsia", "Naranja Cozmo", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"), listOf(0,1,2,3,4,5,6,7), 0)
-                  addSpinner("Tamaño de Ojos", "eye_scale", listOf("Pequeño (0.8x)", "Normal (1.0x)", "Grande (1.3x)", "Gigante (1.6x)"), listOf(0.8f, 1.0f, 1.3f, 1.6f), 1)
-                  addSpinner("Tono de Voz Robótica", "voice_pitch", listOf("Grave", "Normal", "Agudo / R2D2"), listOf(0.7f, 1.0f, 1.45f), 2)
-                  addSpinner("Velocidad de Voz", "voice_speed", listOf("Lenta", "Normal", "Rápida"), listOf(0.8f, 1.0f, 1.25f), 1)
+                  fun addSpinnerFloat(label: String, key: String, options: List<String>, values: List<Float>, defIndex: Int) {
+                      customContainer.addView(TextView(this).apply {
+                          text = label
+                          setTextColor(Color.parseColor("#8E9AAF"))
+                          textSize = 13f
+                          setPadding(12, 8, 12, 2)
+                      })
+                      val sp = Spinner(this).apply {
+                          adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, options)
+                      }
+                      val current = prefs.getFloat(key, values[defIndex])
+                      sp.setSelection(values.indexOf(current).coerceAtLeast(0))
+                      sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                          override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                              prefs.edit().putFloat(key, values[pos]).apply()
+                          }
+                          override fun onNothingSelected(parent: AdapterView<*>?) {}
+                      }
+                      customContainer.addView(sp)
+                  }
+
+                  addSpinnerInt("Forma de Ojos (Isla Dinámica)", "eye_shape", listOf("Redondos", "Suaves", "Cápsulas"), 1)
+                  addSpinnerInt("Color Neón", "eye_color", listOf("Cian Apple", "Verde Matrix", "Azul Pro", "Rosa Fucsia", "Naranja Cozmo", "Blanco Puro", "Rojo Alerta", "Amarillo Bot"), 0)
+                  addSpinnerFloat("Tamaño de Ojos", "eye_scale", listOf("Pequeño (0.8x)", "Normal (1.0x)", "Grande (1.3x)", "Gigante (1.6x)"), listOf(0.8f, 1.0f, 1.3f, 1.6f), 1)
+                  addSpinnerFloat("Tono de Voz Robótica", "voice_pitch", listOf("Grave", "Normal", "Agudo / R2D2"), listOf(0.7f, 1.0f, 1.45f), 2)
+                  addSpinnerFloat("Velocidad de Voz", "voice_speed", listOf("Lenta", "Normal", "Rápida"), listOf(0.8f, 1.0f, 1.25f), 1)
 
                   rootLayout.addView(customContainer)
 
@@ -998,7 +997,6 @@ jobs:
                       customContainer.visibility = if (customContainer.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                   }
 
-                  // --- INTERRUPTOR DE CÁMARA ---
                   val camToggle = CheckBox(this).apply {
                       text = "📷 Activar seguimiento de cámara frontal"
                       setTextColor(Color.WHITE)
@@ -1018,7 +1016,6 @@ jobs:
                   }
                   rootLayout.addView(result)
 
-                  // --- BOTONES DE ENCENDIDO Y APAGADO ---
                   val btnStart = Button(this).apply {
                       text = "🟢 ENCENDER ROBOT"
                       setBackgroundColor(Color.parseColor("#00C853"))
@@ -1062,8 +1059,8 @@ jobs:
           }
           EOF
 
-      - name: Compilar APK Definitivo
-        run: gradle assembleDebug --no-daemon
+      - name: Compilar APK con reporte detallado
+        run: gradle assembleDebug --info --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
