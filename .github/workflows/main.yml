@@ -1,4 +1,4 @@
-name: Build APK Fase 5
+name: Build APK Robot IA Final Pro
 
 on:
   workflow_dispatch:
@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 8
-                  versionName = "0.8"
+                  versionCode = 10
+                  versionName = "1.0"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -142,7 +142,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/0.8")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.0")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -277,7 +277,7 @@ jobs:
                   val sx = lx
                   val sy = ly
                   val a = ValueAnimator.ofFloat(0f, 1f)
-                  a.duration = 200
+                  a.duration = 180
                   a.addUpdateListener {
                       val t = it.animatedValue as Float
                       lx = sx + (x - sx) * t
@@ -294,7 +294,7 @@ jobs:
               private val loop = object : Runnable {
                   override fun run() {
                       val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
-                      a.duration = 220
+                      a.duration = 190
                       a.addUpdateListener {
                           open = it.animatedValue as Float
                           invalidate()
@@ -452,7 +452,7 @@ jobs:
 
           class OverlayService : Service() {
               companion object {
-                  const val SYSTEM = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o dos frases cortas. No uses listas ni simbolos. Empieza SIEMPRE tu respuesta con una etiqueta de emocion: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] or [guino]. Si el usuario te pide explícitamente realizar una accion del sistema (llamar a alguien, abrir una aplicacion, poner una alarma o enviar un mensaje), incluye al final de tu respuesta una etiqueta de accion en formato exacto: [ACCION:ABRIR:nombre_app], [ACCION:ALARMA:hora:minuto], [ACCION:LLAMAR:contacto] o [ACCION:MENSAJE:contacto:texto]."
+                  const val SYSTEM_BASE = "Eres Robot IA, un asistente que vive en el celular del usuario como dos ojos flotantes. Responde en espanol, en una o duas frases cortas. No uses listas ni simbolos. Empieza SIEMPRE tu respuesta con una etiqueta de emocion: [neutral], [feliz], [triste], [enojado], [sorprendido], [amor], [sueno] o [guino]. Si el usuario te pide explícitamente realizar una accion del sistema (llamar a alguien, abrir una aplicacion, poner una alarma o enviar un mensaje), incluye al final una etiqueta de accion: [ACCION:ABRIR:nombre_app], [ACCION:ALARMA:hora:minuto], [ACCION:LLAMAR:contacto] o [ACCION:MENSAJE:contacto:texto]. Si el usuario te cuenta un dato personal importante sobre él, incluye al final [MEMORIA:lo_que_dijo]."
               }
 
               private lateinit var wm: WindowManager
@@ -488,31 +488,33 @@ jobs:
                               }, 2500)
                           }
                       }
-                  } else if (key != "lasterror" && key != "posx" && key != "posy") {
+                  } else if (key == "track") {
+                      val trackEnabled = sp.getBoolean("track", true)
+                      if (trackEnabled) {
+                          if (camera == null && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                              startCamera()
+                          }
+                      } else {
+                          stopCamera()
+                      }
+                  } else if (key != "lasterror" && key != "posx" && key != "posy" && key != "robot_memory") {
                       handler.post { applyPrefs() }
                   }
               }
 
               override fun onBind(intent: Intent?): IBinder? = null
 
-              private fun island(): Boolean =
-                  getSharedPreferences("robot", MODE_PRIVATE).getBoolean("island", true)
-
               private fun applyPrefs() {
                   val sp = getSharedPreferences("robot", MODE_PRIVATE)
                   eyes.eyeColor = EyesView.COLORS[sp.getInt("eye_color", 0).coerceIn(0, EyesView.COLORS.size - 1)]
                   eyes.shape = sp.getInt("eye_shape", 1).coerceIn(0, 2)
                   eyes.sizeScale = sp.getFloat("eye_scale", 1f)
-                  val d = resources.displayMetrics.density
-                  if (sp.getBoolean("island", true)) {
-                      params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                      params.x = 0
-                      params.y = (10 * d).toInt()
-                  } else {
-                      params.gravity = Gravity.TOP or Gravity.START
-                      params.x = sp.getInt("posx", 300)
-                      params.y = sp.getInt("posy", 60)
-                  }
+                  
+                  // Aplicar posición guardada libremente
+                  params.gravity = Gravity.TOP or Gravity.START
+                  params.x = sp.getInt("posx", 300)
+                  params.y = sp.getInt("posy", 60)
+
                   eyes.requestLayout()
                   eyes.invalidate()
                   try {
@@ -587,7 +589,9 @@ jobs:
                           WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                       PixelFormat.TRANSLUCENT
                   )
-                  params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                  params.gravity = Gravity.TOP or Gravity.START
+                  params.x = prefs.getInt("posx", 300)
+                  params.y = prefs.getInt("posy", 60)
 
                   eyes = EyesView(this)
                   var startX = 0
@@ -595,6 +599,7 @@ jobs:
                   var touchX = 0f
                   var touchY = 0f
                   var moved = false
+                  
                   eyes.setOnTouchListener { _, e ->
                       when (e.action) {
                           MotionEvent.ACTION_DOWN -> {
@@ -608,16 +613,16 @@ jobs:
                               val dx = (e.rawX - touchX).toInt()
                               val dy = (e.rawY - touchY).toInt()
                               if (abs(dx) > 15 || abs(dy) > 15) moved = true
-                              if (!island()) {
-                                  params.x = startX + dx
-                                  params.y = startY + dy
+                              params.x = startX + dx
+                              params.y = startY + dy
+                              try {
                                   wm.updateViewLayout(eyes, params)
-                              }
+                              } catch (ex: Exception) {}
                           }
                           MotionEvent.ACTION_UP -> {
                               if (!moved) {
                                   onTap()
-                              } else if (!island()) {
+                              } else {
                                   prefs.edit()
                                       .putInt("posx", params.x)
                                       .putInt("posy", params.y)
@@ -854,14 +859,22 @@ jobs:
                   if (key.isBlank()) throw Exception("falta la clave de API en la app")
                   var model = prefs.getString("model_" + p, "") ?: ""
                   if (model.isBlank()) model = Llm.defaultModel(p)
+
+                  val savedMemory = prefs.getString("robot_memory", "") ?: ""
+                  val fullSystem = if (savedMemory.isNotBlank()) {
+                      SYSTEM_BASE + " Recuerdos guardados sobre el usuario: " + savedMemory
+                  } else {
+                      SYSTEM_BASE
+                  }
+
                   return try {
-                      Llm.chat(p, key, model, SYSTEM, msgs)
+                      Llm.chat(p, key, model, fullSystem, msgs)
                   } catch (e: Llm.LlmError) {
                       if (e.code != 400 && e.code != 404) throw e
                       val m = Llm.pickModel(p, key)
                       if (m == model) throw e
                       prefs.edit().putString("model_" + p, m).apply()
-                      Llm.chat(p, key, m, SYSTEM, msgs)
+                      Llm.chat(p, key, m, fullSystem, msgs)
                   }
               }
 
@@ -880,6 +893,19 @@ jobs:
                   val action = match?.groupValues?.get(1)
                   val cleanReply = reply.replace(actionRegex, "").trim()
                   return Pair(action, cleanReply)
+              }
+
+              private fun parseMemory(reply: String): String {
+                  val memRegex = Regex("\\[MEMORIA:([^\\]]+)\\]")
+                  val match = memRegex.find(reply)
+                  if (match != null) {
+                      val newMem = match.groupValues[1]
+                      val prefs = getSharedPreferences("robot", MODE_PRIVATE)
+                      val existing = prefs.getString("robot_memory", "") ?: ""
+                      val updated = if (existing.isBlank()) newMem else "$existing; $newMem"
+                      prefs.edit().putString("robot_memory", updated).apply()
+                  }
+                  return reply.replace(memRegex, "").trim()
               }
 
               private fun executeAction(action: String) {
@@ -983,7 +1009,8 @@ jobs:
                                   history.remove(0)
                               }
                               if (f == null) {
-                                  val parsedEmotion = parseEmotion(reply)
+                                  val cleanReply = parseMemory(reply)
+                                  val parsedEmotion = parseEmotion(cleanReply)
                                   val parsedAction = parseAction(parsedEmotion.second)
                                   
                                   if (parsedAction.first != null) {
@@ -1140,7 +1167,7 @@ jobs:
                   }
 
                   val info = TextView(this).apply {
-                      text = "1) Elige el servicio y pega tu clave. 2) Toca Probar clave. 3) Despierta los ojos: tocalos para hablar y ellos te siguen con la mirada."
+                      text = "1) Elige el servicio y pega tu clave. 2) Toca Probar clave. 3) Despierta los ojos: tocalos para hablar (puedes arrastrarlos libremente por la pantalla)."
                   }
                   val spinner = Spinner(this)
                   spinner.adapter = ArrayAdapter(
@@ -1154,8 +1181,11 @@ jobs:
                   }
                   val modelBox = EditText(this).apply { hint = "modelo (se rellena solo)" }
                   val track = CheckBox(this).apply {
-                      text = "Seguir mi cara con la camara frontal (gasta mas bateria)"
+                      text = "Hacer que me siga con los ojos (Cámara frontal)"
                       isChecked = prefs.getBoolean("track", true)
+                      setOnCheckedChangeListener { _, on ->
+                          prefs.edit().putBoolean("track", on).apply()
+                      }
                   }
                   result = TextView(this)
                   val test = Button(this).apply { text = "Probar clave" }
@@ -1255,13 +1285,7 @@ jobs:
                   choice("Forma", "eye_shape", EyesView.SHAPE_NAMES, 1)
                   choice("Color", "eye_color", EyesView.COLOR_NAMES, 0)
                   slider("Tamano", "eye_scale", 0.6f, 1.6f, 1.0f)
-                  layout.addView(CheckBox(this).apply {
-                      text = "Modo isla (fijo arriba al centro, como el iPhone)"
-                      isChecked = prefs.getBoolean("island", true)
-                      setOnCheckedChangeListener { _, on ->
-                          prefs.edit().putBoolean("island", on).apply()
-                      }
-                  })
+                  
                   layout.addView(TextView(this).apply { text = "Probar una expresion (con los ojos despiertos):" })
                   val exprSpinner = Spinner(this)
                   exprSpinner.adapter = ArrayAdapter(
@@ -1275,6 +1299,21 @@ jobs:
                           prefs.edit()
                               .putString("preview", name + "|" + System.currentTimeMillis())
                               .apply()
+                      }
+                  })
+
+                  layout.addView(Button(this).apply {
+                      text = "Ver recuerdos de Robot IA"
+                      setOnClickListener {
+                          val mem = prefs.getString("robot_memory", "Aún no tengo recuerdos guardados.")
+                          result.text = "Memoria: $mem"
+                      }
+                  })
+                  layout.addView(Button(this).apply {
+                      text = "Borrar memoria"
+                      setOnClickListener {
+                          prefs.edit().remove("robot_memory").apply()
+                          result.text = "Memoria borrada."
                       }
                   })
 
