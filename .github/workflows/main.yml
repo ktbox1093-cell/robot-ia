@@ -25,6 +25,7 @@ jobs:
           mkdir -p app/src/main/java/com/robotia/app
           mkdir -p app/src/main/res/mipmap-anydpi-v26
           mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/values
 
           cat > settings.gradle.kts <<'EOF'
           pluginManagement {
@@ -471,7 +472,6 @@ jobs:
               private var lastFace = 0L
               private var lastSeen = 0L
 
-              // Sonidos de robot R2D2 / Cozmo en inactividad
               private val r2d2Sounds = listOf("bip bop bzzzt", "wub wup beep", "chirp zzt boop", "whirrr bip", "piip bloop zzt")
               private val idleSoundRunnable = object : Runnable {
                   override fun run() {
@@ -647,7 +647,6 @@ jobs:
                   applyPrefs()
                   prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
-                  // Iniciar sonidos automáticos R2D2 en inactividad
                   handler.postDelayed(idleSoundRunnable, 10000)
 
                   if (camOk) startCamera()
@@ -1150,7 +1149,6 @@ jobs:
                   }
                   rootLayout.addView(info)
 
-                  // VERIFICAR SI YA EXISTE API KEY GUARDADA (para que no vuelva a aparecer pidiéndola)
                   val existingGroq = prefs.getString("key_groq", "") ?: ""
                   val existingMistral = prefs.getString("key_mistral", "") ?: ""
                   val hasApiKey = existingGroq.isNotBlank() || existingMistral.isNotBlank()
@@ -1229,7 +1227,6 @@ jobs:
                   }
                   rootLayout.addView(apiKeyContainer)
 
-                  // MENÚ DE PERSONALIZACIÓN DEL ROBOT (Voz, tamaño de ojos, color y gestos) con 3 intentos
                   val btnToggleCustom = Button(this).apply {
                       text = "⚙️ Personalizar Robot (Voz, Ojos, Gestos)"
                       setBackgroundColor(Color.parseColor("#1A202C"))
@@ -1380,11 +1377,11 @@ jobs:
                               val q = JSONArray().put(JSONObject().put("role", "user").put("content", "Hola"))
                               var m = typed.ifBlank { Llm.defaultModel(p) }
                               val r = try {
-                                  Llm.chat(p, key, m, "Responde en espanol", q)
+                                  Llm.chat(p, key, m, "Responde in espanol", q)
                               } catch (e: Llm.LlmError) {
                                   if (e.code != 400 && e.code != 404) throw e
                                   m = Llm.pickModel(p, key)
-                                  Llm.chat(p, key, m, "Responde en espanol", q)
+                                  Llm.chat(p, key, m, "Responde in espanol", q)
                               }
                               prefs.edit().putString("model_" + p, m).remove("lasterror").apply()
                               "¡Enlace exitoso con el sistema!"
