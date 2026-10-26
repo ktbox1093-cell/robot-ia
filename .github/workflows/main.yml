@@ -1,4 +1,4 @@
-name: Build APK Robot IA Final Pro
+name: Build APK Robot IA Final Store Ready
 
 on:
   workflow_dispatch:
@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 10
-                  versionName = "1.0"
+                  versionCode = 11
+                  versionName = "1.1"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -142,7 +142,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.0")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.1")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -294,7 +294,7 @@ jobs:
               private val loop = object : Runnable {
                   override fun run() {
                       val a = ValueAnimator.ofFloat(1f, 0.05f, 1f)
-                      a.duration = 190
+                      a.duration = 200
                       a.addUpdateListener {
                           open = it.animatedValue as Float
                           invalidate()
@@ -304,7 +304,7 @@ jobs:
                           lx = (-1..1).random().toFloat() * 0.8f
                           ly = 0f
                       }
-                      handler.postDelayed(this, (2500..5500).random().toLong())
+                      handler.postDelayed(this, (3500..6500).random().toLong())
                   }
               }
 
@@ -497,8 +497,6 @@ jobs:
                       } else {
                           stopCamera()
                       }
-                  } else if (key != "lasterror" && key != "posx" && key != "posy" && key != "robot_memory") {
-                      handler.post { applyPrefs() }
                   }
               }
 
@@ -510,7 +508,6 @@ jobs:
                   eyes.shape = sp.getInt("eye_shape", 1).coerceIn(0, 2)
                   eyes.sizeScale = sp.getFloat("eye_scale", 1f)
                   
-                  // Aplicar posición guardada libremente
                   params.gravity = Gravity.TOP or Gravity.START
                   params.x = sp.getInt("posx", 300)
                   params.y = sp.getInt("posy", 60)
@@ -519,22 +516,7 @@ jobs:
                   eyes.invalidate()
                   try {
                       wm.updateViewLayout(eyes, params)
-                  } catch (e: Exception) {
-                  }
-                  if (ttsReady) applyVoice(sp)
-              }
-
-              private fun applyVoice(sp: SharedPreferences) {
-                  tts?.setSpeechRate(sp.getFloat("tts_rate", 1f))
-                  tts?.setPitch(sp.getFloat("tts_pitch", 1f))
-                  val name = sp.getString("tts_voice", "") ?: ""
-                  if (name.isNotBlank()) {
-                      try {
-                          val v = tts?.voices?.firstOrNull { it.name == name }
-                          if (v != null) tts?.voice = v
-                      } catch (e: Exception) {
-                      }
-                  }
+                  } catch (e: Exception) {}
               }
 
               override fun onCreate() {
@@ -576,7 +558,6 @@ jobs:
                               }
                           })
                           ttsReady = true
-                          applyVoice(prefs)
                       }
                   }
 
@@ -676,7 +657,8 @@ jobs:
                                       try {
                                           img = r.acquireLatestImage()
                                           val now = System.currentTimeMillis()
-                                          if (img != null && now - lastFace >= 250) {
+                                          // Optimización de batería: análisis de rostros cada 700ms para menor consumo
+                                          if (img != null && now - lastFace >= 700) {
                                               lastFace = now
                                               processImage(img, rot, step)
                                           }
@@ -694,25 +676,18 @@ jobs:
                                                   val req = cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                                                   req.addTarget(ir.surface)
                                                   s.setRepeatingRequest(req.build(), null, bg)
-                                              } catch (e: Exception) {
-                                              }
+                                              } catch (e: Exception) {}
                                           }
                                           override fun onConfigureFailed(s: CameraCaptureSession) {}
                                       },
                                       bg
                                   )
-                              } catch (e: Exception) {
-                              }
+                              } catch (e: Exception) {}
                           }
-                          override fun onDisconnected(cam: CameraDevice) {
-                              cam.close()
-                          }
-                          override fun onError(cam: CameraDevice, error: Int) {
-                              cam.close()
-                          }
+                          override fun onDisconnected(cam: CameraDevice) { cam.close() }
+                          override fun onError(cam: CameraDevice, error: Int) { cam.close() }
                       }, bg)
-                  } catch (e: Exception) {
-                  }
+                  } catch (e: Exception) {}
               }
 
               private fun processImage(img: Image, rot: Int, step: Int) {
@@ -733,22 +708,10 @@ jobs:
                           val xs: Int
                           val ys: Int
                           when (rot) {
-                              90 -> {
-                                  xs = yu
-                                  ys = sh - 1 - xu
-                              }
-                              270 -> {
-                                  xs = sw - 1 - yu
-                                  ys = xu
-                              }
-                              180 -> {
-                                  xs = sw - 1 - xu
-                                  ys = sh - 1 - yu
-                              }
-                              else -> {
-                                  xs = xu
-                                  ys = yu
-                              }
+                              90 -> { xs = yu; ys = sh - 1 - xu }
+                              270 -> { xs = sw - 1 - yu; ys = xu }
+                              180 -> { xs = sw - 1 - xu; ys = sh - 1 - yu }
+                              else -> { xs = xu; ys = yu }
                           }
                           val v = buf.get(ys * step * rs + xs * step * ps).toInt() and 0xFF
                           px[yu * uw + xu] =
@@ -823,27 +786,16 @@ jobs:
                       override fun onRmsChanged(v: Float) {}
                       override fun onBufferReceived(b: ByteArray?) {}
                       override fun onEndOfSpeech() {}
-                      override fun onError(error: Int) {
-                          eyes.state = EyesView.IDLE
-                      }
+                      override fun onError(error: Int) { eyes.state = EyesView.IDLE }
                       override fun onResults(res: Bundle?) {
-                          val text = res
-                              ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                              ?.firstOrNull()
-                          if (text.isNullOrBlank()) {
-                              eyes.state = EyesView.IDLE
-                          } else {
-                              ask(text)
-                          }
+                          val text = res?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                          if (text.isNullOrBlank()) eyes.state = EyesView.IDLE else ask(text)
                       }
                       override fun onPartialResults(p: Bundle?) {}
                       override fun onEvent(type: Int, p: Bundle?) {}
                   })
                   val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                  i.putExtra(
-                      RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                      RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                  )
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                   i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
                   eyes.state = EyesView.LISTENING
                   r.startListening(i)
@@ -860,9 +812,26 @@ jobs:
                   var model = prefs.getString("model_" + p, "") ?: ""
                   if (model.isBlank()) model = Llm.defaultModel(p)
 
-                  val savedMemory = prefs.getString("robot_memory", "") ?: ""
+                  // Memoria limitada estrictamente a los últimos 7 días
+                  val rawMem = prefs.getString("robot_memory_json", "[]") ?: "[]"
+                  val memArray = JSONArray(rawMem)
+                  val filteredArray = JSONArray()
+                  val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000
+                  val now = System.currentTimeMillis()
+                  val memoryBuilder = StringBuilder()
+
+                  for (i in 0 until memArray.length()) {
+                      val item = memArray.getJSONObject(i)
+                      if (now - item.getLong("time") <= sevenDaysMillis) {
+                          filteredArray.put(item)
+                          memoryBuilder.append(item.getString("text")).append("; ")
+                      }
+                  }
+                  prefs.edit().putString("robot_memory_json", filteredArray.toString()).apply()
+
+                  val savedMemory = memoryBuilder.toString()
                   val fullSystem = if (savedMemory.isNotBlank()) {
-                      SYSTEM_BASE + " Recuerdos guardados sobre el usuario: " + savedMemory
+                      SYSTEM_BASE + " Recuerdos guardados del usuario (últimos 7 días): " + savedMemory
                   } else {
                       SYSTEM_BASE
                   }
@@ -901,9 +870,11 @@ jobs:
                   if (match != null) {
                       val newMem = match.groupValues[1]
                       val prefs = getSharedPreferences("robot", MODE_PRIVATE)
-                      val existing = prefs.getString("robot_memory", "") ?: ""
-                      val updated = if (existing.isBlank()) newMem else "$existing; $newMem"
-                      prefs.edit().putString("robot_memory", updated).apply()
+                      val rawMem = prefs.getString("robot_memory_json", "[]") ?: "[]"
+                      val memArray = JSONArray(rawMem)
+                      val newObj = JSONObject().put("time", System.currentTimeMillis()).put("text", newMem)
+                      memArray.put(newObj)
+                      prefs.edit().putString("robot_memory_json", memArray.toString()).apply()
                   }
                   return reply.replace(memRegex, "").trim()
               }
@@ -1036,8 +1007,7 @@ jobs:
 
               override fun onDestroy() {
                   turn++
-                  getSharedPreferences("robot", MODE_PRIVATE)
-                      .unregisterOnSharedPreferenceChangeListener(prefListener)
+                  getSharedPreferences("robot", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefListener)
                   stopCamera()
                   recognizer?.destroy()
                   tts?.shutdown()
@@ -1063,18 +1033,14 @@ jobs:
           import android.os.Bundle
           import android.provider.Settings
           import android.speech.tts.TextToSpeech
-          import android.speech.tts.Voice
           import android.text.InputType
           import android.view.Gravity
-          import android.view.View
-          import android.widget.AdapterView
           import android.widget.ArrayAdapter
           import android.widget.Button
           import android.widget.CheckBox
           import android.widget.EditText
           import android.widget.LinearLayout
           import android.widget.ScrollView
-          import android.widget.SeekBar
           import android.widget.Spinner
           import android.widget.TextView
           import org.json.JSONArray
@@ -1086,18 +1052,11 @@ jobs:
               private val prefs by lazy { getSharedPreferences("robot", MODE_PRIVATE) }
               private val providers = listOf("groq", "mistral")
               private var current: String? = null
-              private var tts: TextToSpeech? = null
-              private val voiceNames = ArrayList<String>()
 
               override fun onResume() {
                   super.onResume()
                   val err = prefs.getString("lasterror", "") ?: ""
-                  if (err.isNotBlank()) result.text = "Ultimo error del robot: " + err
-              }
-
-              override fun onDestroy() {
-                  tts?.shutdown()
-                  super.onDestroy()
+                  if (err.isNotBlank()) result.text = "Error: " + err
               }
 
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -1127,92 +1086,72 @@ jobs:
                       })
                   }
 
-                  fun slider(name: String, key: String, min: Float, max: Float, def: Float) {
-                      val v = prefs.getFloat(key, def)
-                      val t = TextView(this)
-                      fun show(x: Float) {
-                          t.text = name + ": " + String.format(Locale.US, "%.2f", x)
-                      }
-                      show(v)
-                      val sb = SeekBar(this)
-                      sb.max = 100
-                      sb.progress = ((v - min) / (max - min) * 100f).toInt().coerceIn(0, 100)
-                      sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                          override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                              val x = min + (max - min) * p / 100f
-                              show(x)
-                              if (fromUser) prefs.edit().putFloat(key, x).apply()
-                          }
-                          override fun onStartTrackingTouch(s: SeekBar?) {}
-                          override fun onStopTrackingTouch(s: SeekBar?) {}
-                      })
-                      layout.addView(t)
-                      layout.addView(sb)
-                  }
-
-                  fun choice(name: String, key: String, options: List<String>, def: Int) {
-                      layout.addView(TextView(this).apply { text = name })
-                      val sp = Spinner(this)
-                      sp.adapter = ArrayAdapter(
-                          this, android.R.layout.simple_spinner_dropdown_item, options
-                      )
-                      sp.setSelection(prefs.getInt(key, def).coerceIn(0, options.size - 1))
-                      sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                          override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                              if (prefs.getInt(key, def) != pos) prefs.edit().putInt(key, pos).apply()
-                          }
-                          override fun onNothingSelected(parent: AdapterView<*>?) {}
-                      }
-                      layout.addView(sp)
-                  }
-
                   val info = TextView(this).apply {
-                      text = "1) Elige el servicio y pega tu clave. 2) Toca Probar clave. 3) Despierta los ojos: tocalos para hablar (puedes arrastrarlos libremente por la pantalla)."
+                      text = "🤖 Robot IA - Configuración\n\n1. Selecciona tu proveedor e ingresa tu clave API.\n2. Los cambios de clave o proveedor solo se permiten 1 vez cada 7 días por seguridad.\n3. Usa los botones inferiores para controlar el servicio."
                   }
+                  
                   val spinner = Spinner(this)
                   spinner.adapter = ArrayAdapter(
                       this,
                       android.R.layout.simple_spinner_dropdown_item,
-                      listOf("Groq", "Mistral")
+                      listOf("Groq (Recomendado)", "Mistral")
                   )
+                  
                   val keyBox = EditText(this).apply {
-                      hint = "clave de API"
+                      hint = "Clave de API personal"
                       inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                   }
-                  val modelBox = EditText(this).apply { hint = "modelo (se rellena solo)" }
+                  val modelBox = EditText(this).apply { hint = "Modelo (automático)" }
+
+                  // Control estricto de modificación: Permitir cambios solo 1 vez a la semana (7 días)
+                  val lastChangeTime = prefs.getLong("last_config_change", 0L)
+                  val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000
+                  val now = System.currentTimeMillis()
+                  val canModify = (now - lastChangeTime) > sevenDaysMillis
+
+                  if (!canModify) {
+                      val daysLeft = ((sevenDaysMillis - (now - lastChangeTime)) / (1000 * 60 * 60 * 24)).toInt()
+                      keyBox.isEnabled = false
+                      spinner.isEnabled = false
+                      modelBox.isEnabled = false
+                  }
+
                   val track = CheckBox(this).apply {
-                      text = "Hacer que me siga con los ojos (Cámara frontal)"
+                      text = "Seguir mi cara con cámara frontal (Modo Activo)"
                       isChecked = prefs.getBoolean("track", true)
                       setOnCheckedChangeListener { _, on ->
                           prefs.edit().putBoolean("track", on).apply()
                       }
                   }
-                  result = TextView(this)
-                  val test = Button(this).apply { text = "Probar clave" }
-                  val start = Button(this).apply { text = "Despertar ojos" }
-                  val stop = Button(this).apply { text = "Dormir ojos" }
+
+                  result = TextView(this).apply { setPadding(0, 10, 0, 10) }
+                  val test = Button(this).apply { text = "Probar Clave API" }
+                  
+                  // Únicos 2 botones principales solicitados: Apagar/Encender Robot y Cámara de seguimiento
+                  val start = Button(this).apply { text = "🟢 Encender Robot IA" }
+                  val stop = Button(this).apply { text = "🔴 Apagar Robot IA" }
 
                   fun saveCurrent() {
+                      if (!canModify) return // Bloqueado por regla de 7 días
                       prefs.edit().putBoolean("track", track.isChecked).apply()
                       val c = current ?: return
                       prefs.edit()
                           .putString("key_" + c, Llm.clean(keyBox.text.toString()))
                           .putString("model_" + c, modelBox.text.toString().trim())
                           .putString("provider", c)
+                          .putLong("last_config_change", System.currentTimeMillis())
                           .apply()
                   }
 
-                  spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                      override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                          saveCurrent()
+                  spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: android.widget.AdapterView<*>, v: View?, pos: Int, id: Long) {
                           val p = providers[pos]
                           current = p
                           keyBox.setText(prefs.getString("key_" + p, ""))
                           modelBox.setText(prefs.getString("model_" + p, ""))
                           modelBox.hint = Llm.defaultModel(p)
-                          prefs.edit().putString("provider", p).apply()
                       }
-                      override fun onNothingSelected(parent: AdapterView<*>?) {}
+                      override fun onNothingSelected(parent: android.widget.AdapterView<*>) {}
                   }
                   val saved = prefs.getString("provider", "groq") ?: "groq"
                   spinner.setSelection(providers.indexOf(saved).coerceAtLeast(0))
@@ -1222,12 +1161,10 @@ jobs:
                       val p = current ?: "groq"
                       val key = Llm.clean(keyBox.text.toString())
                       val typed = modelBox.text.toString().trim()
-                      result.text = "Probando..."
+                      result.text = "Probando conexión..."
                       Thread {
                           val out = try {
-                              val q = JSONArray().put(
-                                  JSONObject().put("role", "user").put("content", "Di hola en una frase corta")
-                              )
+                              val q = JSONArray().put(JSONObject().put("role", "user").put("content", "Hola"))
                               var m = typed.ifBlank { Llm.defaultModel(p) }
                               val r = try {
                                   Llm.chat(p, key, m, "Responde en espanol", q)
@@ -1236,12 +1173,11 @@ jobs:
                                   m = Llm.pickModel(p, key)
                                   Llm.chat(p, key, m, "Responde en espanol", q)
                               }
-                              val finalModel = m
-                              prefs.edit().putString("model_" + p, finalModel).remove("lasterror").apply()
-                              runOnUiThread { modelBox.setText(finalModel) }
-                              "FUNCIONA con " + p + ". Modelo: " + finalModel + ". Respuesta: " + r
+                              prefs.edit().putString("model_" + p, m).remove("lasterror").apply()
+                              runOnUiThread { modelBox.setText(m) }
+                              "¡Conexión exitosa con $p!"
                           } catch (e: Exception) {
-                              "FALLO: " + e.message
+                              "Error: " + e.message
                           }
                           runOnUiThread { result.text = out }
                       }.start()
@@ -1250,28 +1186,27 @@ jobs:
                   start.setOnClickListener {
                       saveCurrent()
                       if (!Settings.canDrawOverlays(this)) {
-                          startActivity(
-                              Intent(
-                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                  Uri.parse("package:$packageName")
-                              )
-                          )
-                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-                          != PackageManager.PERMISSION_GRANTED
-                      ) {
-                          requestPermissions(
-                              arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
-                              2
-                          )
+                          startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                      } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA), 2)
                       } else {
                           startForegroundService(Intent(this, OverlayService::class.java))
+                          result.text = "Robot IA encendido en pantalla."
                       }
                   }
+
                   stop.setOnClickListener {
                       stopService(Intent(this, OverlayService::class.java))
+                      result.text = "Robot IA apagado."
                   }
 
                   layout.addView(info)
+                  if (!canModify) {
+                      layout.addView(TextView(this).apply {
+                          text = "⚠️ Llave bloqueada temporalmente. Podrás cambiarla nuevamente después de que se cumpla el ciclo de 7 días."
+                          setTextColor(android.graphics.Color.RED)
+                      })
+                  }
                   layout.addView(spinner)
                   layout.addView(keyBox)
                   layout.addView(modelBox)
@@ -1281,103 +1216,15 @@ jobs:
                   layout.addView(start)
                   layout.addView(stop)
 
-                  title("Personalizar ojos")
-                  choice("Forma", "eye_shape", EyesView.SHAPE_NAMES, 1)
-                  choice("Color", "eye_color", EyesView.COLOR_NAMES, 0)
-                  slider("Tamano", "eye_scale", 0.6f, 1.6f, 1.0f)
-                  
-                  layout.addView(TextView(this).apply { text = "Probar una expresion (con los ojos despiertos):" })
-                  val exprSpinner = Spinner(this)
-                  exprSpinner.adapter = ArrayAdapter(
-                      this, android.R.layout.simple_spinner_dropdown_item, EyesView.EXPR_NAMES
-                  )
-                  layout.addView(exprSpinner)
-                  layout.addView(Button(this).apply {
-                      text = "Mostrar expresion"
-                      setOnClickListener {
-                          val name = EyesView.EXPR_NAMES[exprSpinner.selectedItemPosition]
-                          prefs.edit()
-                              .putString("preview", name + "|" + System.currentTimeMillis())
-                              .apply()
-                      }
-                  })
-
-                  layout.addView(Button(this).apply {
-                      text = "Ver recuerdos de Robot IA"
-                      setOnClickListener {
-                          val mem = prefs.getString("robot_memory", "Aún no tengo recuerdos guardados.")
-                          result.text = "Memoria: $mem"
-                      }
-                  })
-                  layout.addView(Button(this).apply {
-                      text = "Borrar memoria"
-                      setOnClickListener {
-                          prefs.edit().remove("robot_memory").apply()
-                          result.text = "Memoria borrada."
-                      }
-                  })
-
-                  title("Personalizar voz")
-                  val voiceSpinner = Spinner(this)
-                  layout.addView(TextView(this).apply { text = "Voz" })
-                  layout.addView(voiceSpinner)
-                  voiceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                      override fun onItemSelected(parent: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                          if (pos < voiceNames.size) {
-                              val n = voiceNames[pos]
-                              if ((prefs.getString("tts_voice", "") ?: "") != n) {
-                                  prefs.edit().putString("tts_voice", n).apply()
-                              }
-                          }
-                      }
-                      override fun onNothingSelected(parent: AdapterView<*>?) {}
-                  }
-                  slider("Velocidad", "tts_rate", 0.5f, 2.0f, 1.0f)
-                  slider("Tono", "tts_pitch", 0.5f, 2.0f, 1.0f)
-                  layout.addView(Button(this).apply {
-                      text = "Probar voz"
-                      setOnClickListener {
-                          val t = tts
-                          if (t != null) {
-                              t.setSpeechRate(prefs.getFloat("tts_rate", 1f))
-                              t.setPitch(prefs.getFloat("tts_pitch", 1f))
-                              val name = prefs.getString("tts_voice", "") ?: ""
-                              val v = t.voices?.firstOrNull { it.name == name }
-                              if (v != null) t.voice = v else t.language = Locale.getDefault()
-                              t.speak("Hola, asi sueno yo", TextToSpeech.QUEUE_FLUSH, null, "test")
-                          }
-                      }
-                  })
-
-                  tts = TextToSpeech(this) { st ->
-                      if (st == TextToSpeech.SUCCESS) {
-                          val all: Set<Voice> = tts?.voices ?: emptySet()
-                          val list = all.filter { it.locale.language == "es" }.sortedBy { it.name }
-                          runOnUiThread {
-                              voiceNames.clear()
-                              voiceNames.add("")
-                              list.forEach { voiceNames.add(it.name) }
-                              val labels = ArrayList<String>()
-                              labels.add("Voz por defecto")
-                              list.forEach { labels.add(it.name + " (" + it.locale + ")") }
-                              voiceSpinner.adapter = ArrayAdapter(
-                                  this, android.R.layout.simple_spinner_dropdown_item, labels
-                              )
-                              val cur = prefs.getString("tts_voice", "") ?: ""
-                              voiceSpinner.setSelection(voiceNames.indexOf(cur).coerceAtLeast(0))
-                          }
-                      }
-                  }
-
                   setContentView(ScrollView(this).apply { addView(layout) })
               }
           }
           EOF
 
-      - name: Compilar APK
+      - name: Compilar APK Final
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: robot-ia-apk
+          name: robot-ia-apk-final
           path: app/build/outputs/apk/debug/app-debug.apk
