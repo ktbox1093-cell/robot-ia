@@ -1,4 +1,4 @@
-name: Build APK Robot IA Fluid Pro
+name: Build APK Robot IA Perfect Pro
 
 on:
   workflow_dispatch:
@@ -65,8 +65,8 @@ jobs:
                   applicationId = "com.robotia.app"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 13
-                  versionName = "1.3"
+                  versionCode = 14
+                  versionName = "1.4"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -142,7 +142,7 @@ jobs:
                   c.readTimeout = 40000
                   c.setRequestProperty("Authorization", "Bearer " + key)
                   c.setRequestProperty("Accept", "application/json")
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.3")
+                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) RobotIA/1.4")
                   if (body != null) {
                       c.requestMethod = "POST"
                       c.setRequestProperty("Content-Type", "application/json")
@@ -345,8 +345,8 @@ jobs:
                       return
                   }
                   var hh = eh * open
-                  if (ex == 7 && i == 1) hh = eh * 0.15f // Guiño fluido
-                  if (hh < 4f) hh = 4f // Evita que se colapse en una línea
+                  if (ex == 7 && i == 1) hh = eh * 0.15f
+                  if (hh < 6f) hh = 6f // Garantiza volumen perfecto y evita que se vea como línea
 
                   val rect = RectF(cx - ew / 2f, cy - hh / 2f, cx + ew / 2f, cy + hh / 2f)
                   val r = hh / 2f
@@ -1030,13 +1030,12 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   
-                  // Límite exacto de 3 modificaciones permitidas (no cuenta abrir/cerrar la app)
+                  // Límite exacto de 3 modificaciones (cuenta solo cuando se guarda/modifica, no por abrir la app)
                   val editCount = prefs.getInt("config_edit_count", 0)
                   val lastChangeTime = prefs.getLong("last_config_change", 0L)
                   val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000L
                   val now = System.currentTimeMillis()
 
-                  // Permitir cambiar si editCount < 3 o si ya pasó 1 semana desde la última modificación
                   val canCustomize = (editCount < 3) || ((now - lastChangeTime) > sevenDaysMillis)
 
                   val perms = mutableListOf(
@@ -1076,16 +1075,16 @@ jobs:
                   rootLayout.addView(logoView)
 
                   val info = TextView(this).apply {
-                      text = "Asistente Cibernético Profesional\n• Modificaciones realizadas: $editCount / 3 permitidas"
+                      text = "Asistente Cibernético Profesional\n• Modificaciones de API Key: $editCount / 3"
                       setTextColor(Color.parseColor("#A0AEC0"))
                       textSize = 14f
                       gravity = Gravity.CENTER
                   }
                   rootLayout.addView(info)
 
-                  // Botón visible de personalización para abrir/cerrar el panel
+                  // Botón visible de personalización
                   val btnToggleCustom = Button(this).apply {
-                      text = if (canCustomize) "⚙️ Personalizar API Key" else "🔒 Configuración Bloqueada"
+                      text = "⚙️ Personalizar / Ver API Key"
                       setBackgroundColor(Color.parseColor("#1A202C"))
                       setTextColor(Color.parseColor("#00E5FF"))
                       typeface = Typeface.DEFAULT_BOLD
@@ -1094,7 +1093,7 @@ jobs:
 
                   val configContainer = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      visibility = View.GONE // Oculto por defecto hasta tocar el botón
+                      visibility = View.GONE
                       setPadding(0, 20, 0, 20)
                   }
 
@@ -1124,7 +1123,7 @@ jobs:
 
                   if (!canCustomize) {
                       val lockedMsg = TextView(this).apply {
-                          text = "⚠️ Has alcanzado el límite de 3 modificaciones. Dentro de 1 semana se reactivará la opción de cambio."
+                          text = "⚠️ Límite de 3 modificaciones alcanzado. Tu clave actual sigue activa y fija. Dentro de 1 semana se reactivarán los cambios."
                           setTextColor(Color.parseColor("#FF5252"))
                           textSize = 14f
                           gravity = Gravity.CENTER
@@ -1140,7 +1139,7 @@ jobs:
                       configContainer.addView(modelBox)
                       
                       val saveNotice = TextView(this).apply {
-                          text = "✨ Tu API Key se guarda automáticamente."
+                          text = "✨ Tu API Key se guarda y queda fija automáticamente."
                           setTextColor(Color.parseColor("#00E5FF"))
                           textSize = 12f
                           setPadding(0, 10, 0, 10)
@@ -1149,13 +1148,8 @@ jobs:
                   }
                   rootLayout.addView(configContainer)
 
-                  // Alternar visibilidad del panel al pulsar el botón de personalización
                   btnToggleCustom.setOnClickListener {
-                      if (configContainer.visibility == View.VISIBLE) {
-                          configContainer.visibility = View.GONE
-                      } else {
-                          configContainer.visibility = View.VISIBLE
-                      }
+                      configContainer.visibility = if (configContainer.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                   }
 
                   val track = CheckBox(this).apply {
@@ -1197,13 +1191,14 @@ jobs:
                   }
 
                   fun saveCurrent() {
-                      if (!canCustomize) return
-                      prefs.edit().putBoolean("track", track.isChecked).apply()
                       val c = current ?: return
                       val typedKey = Llm.clean(keyBox.text.toString())
                       val oldKey = prefs.getString("key_" + c, "") ?: ""
                       
-                      if (typedKey.isNotBlank() && typedKey != oldKey) {
+                      prefs.edit().putBoolean("track", track.isChecked).apply()
+
+                      // Solo cuenta como modificación si hay una clave nueva escrita y es diferente a la anterior
+                      if (canCustomize && typedKey.isNotBlank() && typedKey != oldKey) {
                           val newCount = editCount + 1
                           prefs.edit()
                               .putString("key_" + c, typedKey)
@@ -1211,6 +1206,12 @@ jobs:
                               .putString("provider", c)
                               .putInt("config_edit_count", newCount)
                               .putLong("last_config_change", System.currentTimeMillis())
+                              .apply()
+                      } else if (typedKey.isNotBlank() && oldKey.isBlank()) {
+                          prefs.edit()
+                              .putString("key_" + c, typedKey)
+                              .putString("model_" + c, modelBox.text.toString().trim())
+                              .putString("provider", c)
                               .apply()
                       }
                   }
@@ -1292,10 +1293,10 @@ jobs:
           }
           EOF
 
-      - name: Compilar APK Final Fluid Pro
+      - name: Compilar APK Final Perfect
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: robot-ia-apk-fluid
+          name: robot-ia-apk-perfect
           path: app/build/outputs/apk/debug/app-debug.apk
